@@ -173,3 +173,11 @@ trivision/
 | Cross-platform | Yes | No | Yes | **Yes** |
 | A/B comparison | No | No | No | **Yes** |
 | Live histograms | No | No | No | **Yes** |
+
+
+CVIPtools Acknowledgment:
+  Algorithms inspired by CVIPtools for Windows
+  Copyright © 1993-2025 Scott E Umbaugh
+  Southern Illinois University Edwardsville
+  https://cviptools.ece.siue.edu
+  Used under permission as stated in CVIPtools license.
