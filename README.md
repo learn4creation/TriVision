@@ -9,7 +9,7 @@ python main.py
 ## Development
 Built with assistance from Claude (Anthropic).
 Wraps OpenCV (BSD), scikit-image (BSD), and CVIPtools algorithms.
-```
+
 <img width="1919" height="1124" alt="image" src="https://github.com/user-attachments/assets/f636d954-77e8-4443-b49f-dbdf50c680d6" />
 
 
