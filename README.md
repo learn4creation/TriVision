@@ -6,7 +6,20 @@
 pip install -r requirements.txt
 python main.py
 ```
-
+## Development
+Built with assistance from Claude (Anthropic).
+Wraps OpenCV (BSD), scikit-image (BSD), and CVIPtools algorithms.
+```
+```
+TriVision/
+├── LICENSE          
+├── README.md        
+├── requirements.txt
+├── main.py
+├── core/
+├── pipeline/
+├── batch/
+└── plugins/
 ---
 
 ## Why TriVision?
