@@ -175,9 +175,30 @@ trivision/
 | Live histograms | No | No | No | **Yes** |
 
 
-CVIPtools Acknowledgment:
-  Algorithms inspired by CVIPtools for Windows
-  Copyright © 1993-2025 Scott E Umbaugh
-  Southern Illinois University Edwardsville
-  https://cviptools.ece.siue.edu
-  Used under permission as stated in CVIPtools license.
+## Acknowledgments
+
+TriVision builds upon the following open-source projects:
+
+**OpenCV** (BSD 3-Clause License)
+Copyright © 2000-2025 Intel Corporation, Willow Garage, Itseez
+https://opencv.org
+
+**scikit-image** (BSD 3-Clause License)
+Copyright © 2009-2025 the scikit-image development team
+https://scikit-image.org
+
+**CVIPtools** (Permissive — free for any purpose)
+Copyright © 1993-2025 Scott E Umbaugh
+Southern Illinois University Edwardsville
+https://cviptools.ece.siue.edu
+
+**NumPy** (BSD 3-Clause License)
+Copyright © 2005-2025 NumPy Developers
+https://numpy.org
+
+**PyQt6** (GPL v3)
+Copyright © Riverbank Computing Limited
+https://riverbankcomputing.com
+
+TriVision reimplements and extends algorithms from these libraries.
+No source code was copied — all implementations are original Python.
