@@ -33,5 +33,15 @@ outputs/
 # Test images (add your own sample images)
 sample_images/
 
-
+data/
 learn4creation/
+
+web_ui/__init__.py
+
+.dockerignore
+docker-compose.override.yml
+docker-compose.yml
+Dockerfile
+Dockerfile.web
+install.sh
+install.bat

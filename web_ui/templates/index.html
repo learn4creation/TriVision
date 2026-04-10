@@ -1,0 +1,779 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TriVision — Web UI</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+<style>
+/* ── Reset & Base ─────────────────────────────────────────────── */
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg0:#03050a; --bg1:#060810; --bg2:#0a0e18; --bg3:#101828;
+  --bd:#1a2030;  --txt:#b0bcd0; --txt2:#6080a0; --txt3:#3a5070;
+  --acc:#2060c0; --acc2:#1a4080; --green:#1a5a1a; --red:#5a1a1a;
+  --cv:#1a3a6a;  --sk:#3a1a6a;  --cl:#1a4a3a;   --tv:#5a2a1a;
+  --radius:6px;  --font:'Segoe UI',system-ui,sans-serif;
+}
+body{background:var(--bg0);color:var(--txt);font-family:var(--font);
+     font-size:13px;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+
+/* ── Header ──────────────────────────────────────────────────── */
+header{display:flex;align-items:center;gap:12px;padding:8px 16px;
+       background:var(--bg1);border-bottom:1px solid var(--bd);flex-shrink:0}
+header h1{font-size:16px;font-weight:600;color:#c0d4f0;letter-spacing:1px}
+header span{font-size:11px;color:var(--txt3)}
+.badge{padding:2px 7px;border-radius:3px;font-size:10px;font-weight:700;color:#ddf}
+.badge.cv{background:var(--cv)} .badge.sk{background:var(--sk)}
+.badge.cl{background:var(--cl)} .badge.tv{background:var(--tv)}
+#theme-btn{margin-left:auto;background:var(--bg2);border:1px solid var(--bd);
+           color:var(--txt2);padding:4px 10px;border-radius:var(--radius);cursor:pointer;font-size:13px}
+#theme-btn:hover{background:var(--bg3)}
+
+/* ── Layout ──────────────────────────────────────────────────── */
+.main{display:flex;flex:1;overflow:hidden}
+
+/* ── Sidebar ─────────────────────────────────────────────────── */
+.sidebar{width:240px;min-width:200px;background:var(--bg1);border-right:1px solid var(--bd);
+         display:flex;flex-direction:column;overflow:hidden;flex-shrink:0}
+.sidebar-search{padding:8px;border-bottom:1px solid var(--bd)}
+.sidebar-search input{width:100%;background:var(--bg0);border:1px solid var(--bd);
+  color:var(--txt);padding:5px 8px;border-radius:var(--radius);font-size:12px;outline:none}
+.sidebar-search input:focus{border-color:var(--acc)}
+.lib-filter{display:flex;gap:3px;padding:6px 8px;border-bottom:1px solid var(--bd)}
+.lib-btn{flex:1;padding:3px 2px;border:none;border-radius:3px;cursor:pointer;
+         font-size:10px;font-weight:700;color:#ddf}
+.lib-btn.cv{background:var(--cv)} .lib-btn.sk{background:var(--sk)}
+.lib-btn.cl{background:var(--cl)} .lib-btn.tv{background:var(--tv)}
+.lib-btn.all{background:var(--bg3);color:var(--txt2)}
+.lib-btn.active{outline:2px solid #fff;outline-offset:-2px}
+.algo-tree{flex:1;overflow-y:auto;padding:4px 0}
+.algo-tree::-webkit-scrollbar{width:4px}
+.algo-tree::-webkit-scrollbar-thumb{background:var(--bd);border-radius:2px}
+.cat-header{padding:6px 10px 2px;font-size:10px;font-weight:700;color:var(--txt3);
+            text-transform:uppercase;letter-spacing:1px;cursor:pointer;
+            display:flex;justify-content:space-between}
+.cat-header:hover{color:var(--txt2)}
+.subcat-header{padding:4px 16px 2px;font-size:11px;color:var(--txt3);cursor:pointer}
+.subcat-header:hover{color:var(--txt2)}
+.algo-item{padding:4px 24px;font-size:12px;color:var(--txt2);cursor:pointer;
+           border-left:2px solid transparent;display:flex;align-items:center;gap:5px}
+.algo-item:hover{background:var(--bg2);color:var(--txt)}
+.algo-item.active{background:var(--bg3);color:#80b0ff;border-left-color:var(--acc)}
+.algo-count{font-size:10px;color:var(--txt3);padding:4px 10px;border-top:1px solid var(--bd)}
+
+/* ── Centre ──────────────────────────────────────────────────── */
+.centre{flex:1;display:flex;flex-direction:column;overflow:hidden;padding:8px;gap:8px}
+
+.viewers{display:flex;gap:8px;flex:1;min-height:0}
+.viewer-panel{flex:1;display:flex;flex-direction:column;background:var(--bg1);
+              border:1px solid var(--bd);border-radius:var(--radius);overflow:hidden}
+.viewer-label{padding:4px 10px;font-size:10px;font-weight:700;color:var(--txt3);
+              background:var(--bg2);border-bottom:1px solid var(--bd);
+              display:flex;justify-content:space-between;align-items:center}
+.viewer-label span{font-size:10px;color:var(--txt3)}
+.img-container{flex:1;display:flex;align-items:center;justify-content:center;
+               background:var(--bg0);overflow:hidden;position:relative}
+.img-container img{max-width:100%;max-height:100%;object-fit:contain;display:block}
+.img-placeholder{color:var(--txt3);font-size:12px;font-family:monospace}
+.hist-bar{height:60px;background:var(--bg0);border-top:1px solid var(--bd)}
+
+/* Controls bar */
+.controls{display:flex;gap:6px;align-items:center;flex-shrink:0;flex-wrap:wrap}
+.btn{padding:5px 12px;border:1px solid var(--bd);border-radius:var(--radius);
+     cursor:pointer;font-size:12px;background:var(--bg2);color:var(--txt2)}
+.btn:hover{background:var(--bg3);color:var(--txt)}
+.btn.primary{background:var(--acc2);color:#c0d8ff;border-color:var(--acc);font-weight:600}
+.btn.primary:hover{background:var(--acc)}
+.btn:disabled{opacity:0.4;cursor:not-allowed}
+.auto-label{display:flex;align-items:center;gap:5px;color:var(--txt3);font-size:12px;cursor:pointer}
+
+/* Metrics bar */
+.metrics{font-size:11px;color:#3a6a3a;font-family:monospace;
+         padding:4px 8px;background:var(--bg1);border:1px solid var(--bd);
+         border-radius:var(--radius);flex-shrink:0}
+
+/* ── Right Panel ─────────────────────────────────────────────── */
+.right-panel{width:300px;min-width:260px;background:var(--bg1);
+             border-left:1px solid var(--bd);display:flex;flex-direction:column;overflow:hidden;flex-shrink:0}
+
+/* Tabs */
+.tabs{display:flex;border-bottom:1px solid var(--bd);background:var(--bg2);flex-shrink:0}
+.tab{flex:1;padding:7px 4px;text-align:center;font-size:11px;cursor:pointer;
+     color:var(--txt3);border-bottom:2px solid transparent}
+.tab:hover{color:var(--txt2)}
+.tab.active{color:#80b0ff;border-bottom-color:var(--acc);background:var(--bg1)}
+.tab-content{flex:1;overflow-y:auto;padding:10px;display:none}
+.tab-content.active{display:flex;flex-direction:column;gap:8px}
+.tab-content::-webkit-scrollbar{width:4px}
+.tab-content::-webkit-scrollbar-thumb{background:var(--bd)}
+
+/* Param panel */
+.algo-title{font-size:13px;font-weight:600;color:#80a0e0}
+.algo-lib{font-size:10px;color:var(--txt3)}
+.algo-desc{font-size:11px;color:var(--txt3);line-height:1.5}
+.param-row{display:flex;align-items:center;justify-content:space-between;gap:6px}
+.param-label{font-size:11px;color:var(--txt2);min-width:80px}
+.param-row input[type=range]{flex:1;accent-color:var(--acc)}
+.param-row input[type=number],.param-row select{
+  width:75px;background:var(--bg0);border:1px solid var(--bd);
+  color:var(--txt);padding:2px 5px;border-radius:3px;font-size:11px}
+.param-row input[type=checkbox]{accent-color:var(--acc)}
+.param-val{font-size:11px;color:var(--txt3);min-width:40px;text-align:right;font-family:monospace}
+
+/* Pipeline */
+.pipeline-node{display:flex;justify-content:space-between;align-items:center;
+               padding:5px 8px;background:var(--bg2);border:1px solid var(--bd);
+               border-radius:4px;font-size:11px;color:var(--txt2)}
+.pipeline-node .remove{cursor:pointer;color:var(--txt3);font-size:14px;line-height:1}
+.pipeline-node .remove:hover{color:#f08080}
+.preset-btn{padding:5px 8px;background:var(--bg2);border:1px solid var(--bd);
+            color:#6090d0;border-radius:4px;cursor:pointer;font-size:11px;text-align:left}
+.preset-btn:hover{background:var(--bg3)}
+.pipeline-run{background:var(--acc2);color:#c0d8ff;border:1px solid var(--acc);
+              padding:7px;border-radius:var(--radius);cursor:pointer;font-size:12px;font-weight:600;width:100%}
+.pipeline-run:hover{background:var(--acc)}
+
+/* Features */
+.feat-table{font-family:monospace;font-size:11px;color:#50b050;white-space:pre;
+            background:var(--bg0);padding:8px;border-radius:4px;overflow-x:auto;line-height:1.6}
+
+/* Webcam tab */
+.webcam-feed{width:100%;aspect-ratio:4/3;background:var(--bg0);border:1px solid var(--bd);
+             border-radius:4px;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.webcam-feed img{width:100%;height:100%;object-fit:cover}
+.webcam-placeholder{color:var(--txt3);font-size:11px;font-family:monospace}
+.webcam-controls{display:flex;gap:6px;flex-wrap:wrap}
+.webcam-btn{flex:1;padding:5px;border:1px solid var(--bd);border-radius:4px;
+            cursor:pointer;font-size:11px;background:var(--bg2);color:var(--txt2)}
+.webcam-btn.start{background:var(--green);color:#8df}
+.webcam-btn.stop{background:var(--red);color:#f88}
+.webcam-btn:disabled{opacity:0.4;cursor:not-allowed}
+.fps-display{font-family:monospace;font-size:11px;color:#3a6a3a}
+
+/* I/O buttons */
+.io-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+
+/* Status */
+.status{font-size:11px;color:var(--txt3);font-family:monospace;
+        padding:3px 8px;background:var(--bg0);border-top:1px solid var(--bd);flex-shrink:0}
+
+/* Spinner */
+.spinner{display:none;width:16px;height:16px;border:2px solid var(--bd);
+         border-top-color:var(--acc);border-radius:50%;animation:spin 0.7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* Light theme */
+body.light{
+  --bg0:#f0f2f5; --bg1:#ffffff; --bg2:#e8eaed; --bg3:#d8dce4;
+  --bd:#c0c8d8;  --txt:#202840; --txt2:#4060a0; --txt3:#8090b0;
+}
+
+/* Responsive */
+@media(max-width:900px){
+  .sidebar{width:180px}
+  .right-panel{width:240px}
+}
+@media(max-width:650px){
+  .sidebar{display:none}
+  .right-panel{width:100%;border-left:none;border-top:1px solid var(--bd)}
+  .main{flex-direction:column}
+  .viewers{flex-direction:column}
+}
+</style>
+</head>
+<body>
+
+<!-- ── HEADER ─────────────────────────────────────────────────── -->
+<header>
+  <h1>TriVision</h1>
+  <span id="algo-count-badge">— algorithms</span>
+  <span class="badge cv">CV</span>
+  <span class="badge sk">SK</span>
+  <span class="badge cl">CL</span>
+  <span class="badge tv">TV</span>
+  <button id="theme-btn" onclick="toggleTheme()">☀ Light</button>
+</header>
+
+<!-- ── MAIN ───────────────────────────────────────────────────── -->
+<div class="main">
+
+  <!-- SIDEBAR -->
+  <div class="sidebar">
+    <div class="sidebar-search">
+      <input id="search-input" placeholder="Search algorithms…" oninput="filterTree(this.value)">
+    </div>
+    <div class="lib-filter">
+      <button class="lib-btn all active" onclick="filterLib('ALL',this)">All</button>
+      <button class="lib-btn cv"  onclick="filterLib('OpenCV',this)">CV</button>
+      <button class="lib-btn sk"  onclick="filterLib('scikit-image',this)">SK</button>
+      <button class="lib-btn cl"  onclick="filterLib('CVIPtools2',this)">CL</button>
+      <button class="lib-btn tv"  onclick="filterLib('TriVision',this)">TV</button>
+    </div>
+    <div class="algo-tree" id="algo-tree"></div>
+    <div class="algo-count" id="algo-count">Loading…</div>
+  </div>
+
+  <!-- CENTRE -->
+  <div class="centre">
+    <div class="viewers">
+      <!-- Input -->
+      <div class="viewer-panel">
+        <div class="viewer-label">
+          INPUT
+          <span id="input-meta">—</span>
+        </div>
+        <div class="img-container" id="input-container">
+          <span class="img-placeholder">Upload or use default image</span>
+        </div>
+        <canvas class="hist-bar" id="input-hist"></canvas>
+      </div>
+      <!-- Output -->
+      <div class="viewer-panel">
+        <div class="viewer-label">
+          OUTPUT
+          <span id="output-meta">—</span>
+        </div>
+        <div class="img-container" id="output-container">
+          <span class="img-placeholder">Process an image</span>
+        </div>
+        <canvas class="hist-bar" id="output-hist"></canvas>
+      </div>
+    </div>
+
+    <!-- Controls -->
+    <div class="controls">
+      <button class="btn primary" id="process-btn" onclick="processImage()">▶ Process</button>
+      <label class="auto-label">
+        <input type="checkbox" id="auto-check" checked onchange="autoChanged()"> Auto
+      </label>
+      <button class="btn" onclick="useOutputAsInput()">→ Use as Input</button>
+      <button class="btn" onclick="diffImages()">⊕ Diff</button>
+      <button class="btn" onclick="defaultImage()">↺ Reset</button>
+      <button class="btn" onclick="downloadOutput()">💾 Save</button>
+      <div class="spinner" id="spinner"></div>
+    </div>
+
+    <!-- Metrics -->
+    <div class="metrics" id="metrics-bar">PSNR: —  RMSE: —  SSIM: —  Sharpness: —</div>
+  </div>
+
+  <!-- RIGHT PANEL -->
+  <div class="right-panel">
+    <div class="tabs">
+      <div class="tab active" onclick="switchTab('params',this)">Params</div>
+      <div class="tab" onclick="switchTab('pipeline',this)">Pipeline</div>
+      <div class="tab" onclick="switchTab('features',this)">Features</div>
+      <div class="tab" onclick="switchTab('webcam',this)">📷</div>
+      <div class="tab" onclick="switchTab('io',this)">I/O</div>
+    </div>
+
+    <!-- PARAMS TAB -->
+    <div class="tab-content active" id="tab-params">
+      <div class="algo-title" id="param-title">Select an algorithm</div>
+      <div class="algo-lib"   id="param-lib"></div>
+      <div class="algo-desc"  id="param-desc"></div>
+      <div id="param-controls"></div>
+    </div>
+
+    <!-- PIPELINE TAB -->
+    <div class="tab-content" id="tab-pipeline">
+      <div style="font-size:11px;color:var(--txt3)">Right-click any algorithm → Add to pipeline</div>
+      <div id="pipeline-nodes" style="display:flex;flex-direction:column;gap:5px"></div>
+      <div style="display:flex;gap:5px;flex-wrap:wrap">
+        <button class="btn" onclick="clearPipeline()" style="flex:1">✕ Clear</button>
+        <button class="pipeline-run" onclick="runPipeline()">▶ Run Pipeline</button>
+      </div>
+      <div style="font-size:11px;color:var(--txt3);margin-top:4px">Presets:</div>
+      <div style="display:flex;flex-direction:column;gap:4px">
+        <button class="preset-btn" onclick="loadPreset('edge')">Edge Detection Pipeline</button>
+        <button class="preset-btn" onclick="loadPreset('denoise')">Denoise + Enhance</button>
+        <button class="preset-btn" onclick="loadPreset('segment')">Segmentation</button>
+        <button class="preset-btn" onclick="loadPreset('features')">Feature Extraction</button>
+        <button class="preset-btn" onclick="loadPreset('compression')">Compression Benchmark</button>
+      </div>
+    </div>
+
+    <!-- FEATURES TAB -->
+    <div class="tab-content" id="tab-features">
+      <button class="btn primary" onclick="extractFeatures()" style="width:100%">📊 Extract All Features</button>
+      <div class="feat-table" id="feat-table">Feature values appear here…</div>
+    </div>
+
+    <!-- WEBCAM TAB -->
+    <div class="tab-content" id="tab-webcam">
+      <div style="display:flex;align-items:center;gap:8px">
+        <label style="font-size:11px;color:var(--txt3)">Camera:</label>
+        <input type="number" id="cam-idx" value="0" min="0" max="9"
+               style="width:50px;background:var(--bg0);border:1px solid var(--bd);
+                      color:var(--txt);padding:3px;border-radius:3px">
+        <span class="fps-display" id="fps-display">FPS: —</span>
+      </div>
+      <div class="webcam-feed" id="webcam-feed">
+        <span class="webcam-placeholder">Click Start Camera</span>
+      </div>
+      <div class="webcam-controls">
+        <button class="webcam-btn start" id="wcam-start" onclick="webcamStart()">▶ Start</button>
+        <button class="webcam-btn stop"  id="wcam-stop"  onclick="webcamStop()" disabled>■ Stop</button>
+        <button class="webcam-btn" id="wcam-snap" onclick="webcamSnapshot()" disabled>📸 Snapshot</button>
+      </div>
+      <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--txt3);cursor:pointer">
+        <input type="checkbox" id="live-algo-check" onchange="toggleLiveAlgo()"> Live algorithm
+      </label>
+      <select id="live-algo-select" style="width:100%;background:var(--bg0);border:1px solid var(--bd);
+              color:var(--txt);padding:4px;border-radius:4px;font-size:11px" onchange="setLiveAlgo()">
+      </select>
+      <div id="wcam-status" style="font-size:10px;color:var(--txt3);font-family:monospace">Stopped</div>
+    </div>
+
+    <!-- I/O TAB -->
+    <div class="tab-content" id="tab-io">
+      <div style="font-size:11px;color:var(--txt3)">Upload Image</div>
+      <input type="file" id="file-input" accept="image/*" onchange="uploadFile()" style="font-size:11px;color:var(--txt2)">
+      <div class="io-grid">
+        <button class="btn" onclick="defaultImage()">↺ Default Image</button>
+        <button class="btn" onclick="downloadOutput()">💾 Save Output</button>
+        <button class="btn" onclick="useOutputAsInput()">→ Use as Input</button>
+        <button class="btn" onclick="diffImages()">⊕ Diff View</button>
+      </div>
+      <div style="font-size:11px;color:var(--txt3);margin-top:6px">Session ID:</div>
+      <div style="font-family:monospace;font-size:11px;color:var(--txt2)" id="session-display"></div>
+    </div>
+  </div>
+</div>
+
+<!-- STATUS BAR -->
+<div class="status" id="status-bar">TriVision Web UI ready</div>
+
+<script>
+// ── State ────────────────────────────────────────────────────────
+const SID = 'sess_' + Math.random().toString(36).slice(2,9);
+let algoTree = {};
+let currentAlgoKey = null;
+let currentParamGetters = {};
+let autoProcess = true;
+let lastWcamFrame = null;
+let libFilter = 'ALL';
+
+document.getElementById('session-display').textContent = SID;
+
+// ── Socket.IO ────────────────────────────────────────────────────
+const socket = io();
+socket.on('webcam_frame', data => {
+  lastWcamFrame = data.frame;
+  const feed = document.getElementById('webcam-feed');
+  let img = feed.querySelector('img');
+  if (!img) { img = document.createElement('img'); feed.innerHTML=''; feed.appendChild(img); }
+  img.src = data.frame;
+  document.getElementById('fps-display').textContent = `FPS: ${data.fps}`;
+});
+socket.on('webcam_stopped', () => setStatus('Webcam stopped'));
+socket.on('webcam_error',   d => setStatus('Webcam error: ' + d.message));
+socket.on('snapshot_ready', d => {
+  setInputPreview(d.preview, d.width, d.height);
+  setStatus('Snapshot captured → Input panel');
+});
+
+// ── Boot ─────────────────────────────────────────────────────────
+async function boot() {
+  const r = await fetch('/api/algorithms');
+  algoTree = await r.json();
+  renderTree();
+  populateLiveAlgoSelect();
+  await defaultImage();
+}
+
+// ── Tree ─────────────────────────────────────────────────────────
+function renderTree(filter='', libF='ALL') {
+  const container = document.getElementById('algo-tree');
+  container.innerHTML = '';
+  let total = 0;
+  const libMap = {'OpenCV':'cv','scikit-image':'sk','CVIPtools2':'cl','TriVision':'tv'};
+
+  for (const [cat, subcats] of Object.entries(algoTree)) {
+    const algos = Object.values(subcats).flat();
+    const visible = algos.filter(a =>
+      (libF==='ALL' || a.lib===libF) &&
+      (!filter || a.label.toLowerCase().includes(filter) || a.description.toLowerCase().includes(filter))
+    );
+    if (!visible.length) continue;
+
+    const catEl = document.createElement('div');
+    catEl.innerHTML = `<div class="cat-header">${cat} <span>▾</span></div>`;
+    let catBody = document.createElement('div');
+
+    for (const [sub, specs] of Object.entries(subcats)) {
+      const vis = specs.filter(a =>
+        (libF==='ALL' || a.lib===libF) &&
+        (!filter || a.label.toLowerCase().includes(filter) || a.description.toLowerCase().includes(filter))
+      );
+      if (!vis.length) continue;
+      const subEl = document.createElement('div');
+      subEl.innerHTML = `<div class="subcat-header">${sub}</div>`;
+      vis.forEach(spec => {
+        const item = document.createElement('div');
+        item.className = 'algo-item';
+        item.dataset.key = spec.key;
+        const cls = libMap[spec.lib] || '';
+        item.innerHTML = `<span class="badge ${cls}" style="font-size:9px">${cls.toUpperCase()}</span> ${spec.label}`;
+        item.title = spec.description || '';
+        item.addEventListener('click', () => selectAlgo(spec.key));
+        item.addEventListener('contextmenu', e => { e.preventDefault(); addToPipeline(spec.key); });
+        subEl.appendChild(item);
+        total++;
+      });
+      catBody.appendChild(subEl);
+    }
+    catEl.appendChild(catBody);
+    container.appendChild(catEl);
+  }
+  document.getElementById('algo-count').textContent = `${total} algorithms`;
+  document.getElementById('algo-count-badge').textContent = `${total} algorithms`;
+}
+
+function filterTree(q) { renderTree(q.toLowerCase(), libFilter); }
+function filterLib(lib, btn) {
+  libFilter = lib;
+  document.querySelectorAll('.lib-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderTree(document.getElementById('search-input').value.toLowerCase(), lib);
+}
+
+// ── Algorithm Selection ───────────────────────────────────────────
+function selectAlgo(key) {
+  currentAlgoKey = key;
+  document.querySelectorAll('.algo-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.key === key);
+  });
+  const spec = findSpec(key);
+  if (!spec) return;
+
+  document.getElementById('param-title').textContent = spec.label;
+  const libColors = {OpenCV:'#1a4a8a','scikit-image':'#5a2a8a',CVIPtools2:'#1a6a4a',TriVision:'#8a4a1a'};
+  document.getElementById('param-lib').innerHTML =
+    `<span style="color:${libColors[spec.lib]||'#666'}">${spec.lib}</span>`;
+  document.getElementById('param-desc').textContent = spec.description || '';
+
+  renderParams(spec);
+  switchTab('params', document.querySelector('.tab'));
+  if (autoProcess) processImage();
+}
+
+function findSpec(key) {
+  for (const subcats of Object.values(algoTree))
+    for (const specs of Object.values(subcats))
+      for (const s of specs)
+        if (s.key === key) return s;
+  return null;
+}
+
+// ── Parameter Controls ────────────────────────────────────────────
+function renderParams(spec) {
+  const container = document.getElementById('param-controls');
+  container.innerHTML = '';
+  currentParamGetters = {};
+
+  spec.params.forEach(p => {
+    const row = document.createElement('div');
+    row.className = 'param-row';
+    const lbl = document.createElement('span');
+    lbl.className = 'param-label'; lbl.textContent = p.label;
+
+    let input, valDisplay;
+
+    if (p.kind === 'int' || p.kind === 'float') {
+      const step = p.step || (p.kind==='int' ? 1 : 0.01);
+      input = document.createElement('input');
+      input.type = 'range';
+      input.min = p.lo; input.max = p.hi; input.step = step; input.value = p.default;
+      valDisplay = document.createElement('span');
+      valDisplay.className = 'param-val';
+      valDisplay.textContent = p.default;
+      input.oninput = () => {
+        const v = p.kind==='int' ? parseInt(input.value) : parseFloat(parseFloat(input.value).toFixed(4));
+        valDisplay.textContent = v;
+        if (autoProcess) processImage();
+      };
+      currentParamGetters[p.name] = () => p.kind==='int' ? parseInt(input.value) : parseFloat(input.value);
+      row.appendChild(lbl); row.appendChild(input); row.appendChild(valDisplay);
+
+    } else if (p.kind === 'bool') {
+      input = document.createElement('input');
+      input.type = 'checkbox'; input.checked = p.default;
+      input.onchange = () => { if (autoProcess) processImage(); };
+      currentParamGetters[p.name] = () => input.checked;
+      row.appendChild(lbl); row.appendChild(input);
+
+    } else if (p.kind === 'choice') {
+      input = document.createElement('select');
+      p.choices.forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = c; opt.textContent = c;
+        if (c === p.default) opt.selected = true;
+        input.appendChild(opt);
+      });
+      input.onchange = () => { if (autoProcess) processImage(); };
+      currentParamGetters[p.name] = () => input.value;
+      row.appendChild(lbl); row.appendChild(input);
+    }
+    container.appendChild(row);
+  });
+}
+
+function getParams() {
+  const p = {};
+  for (const [k,fn] of Object.entries(currentParamGetters)) p[k] = fn();
+  return p;
+}
+
+// ── Processing ────────────────────────────────────────────────────
+async function processImage() {
+  if (!currentAlgoKey) return;
+  showSpinner(true);
+  setStatus(`Processing: ${currentAlgoKey}…`);
+  try {
+    const res = await fetch('/api/process', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({session_id:SID, algo_key:currentAlgoKey, params:getParams()})
+    });
+    const data = await res.json();
+    if (data.type === 'features') {
+      showFeatures(data.features);
+      switchTab('features', document.querySelectorAll('.tab')[2]);
+      setStatus('Features extracted');
+    } else if (data.preview) {
+      setOutputPreview(data.preview, data.width, data.height);
+      setMetrics(data.metrics);
+      setStatus(data.message);
+    } else {
+      setStatus('Error: ' + (data.error||'unknown'));
+    }
+  } catch(e) { setStatus('Network error: '+e); }
+  showSpinner(false);
+}
+
+// ── Pipeline ──────────────────────────────────────────────────────
+async function addToPipeline(key) {
+  const spec = findSpec(key);
+  if (!spec) return;
+  const res = await fetch('/api/pipeline/add', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({session_id:SID, algo_key:key})
+  });
+  const data = await res.json();
+  if (data.success) { renderPipelineNode(data.node_id, data.label); setStatus(`Added to pipeline: ${data.label}`); }
+}
+
+function renderPipelineNode(nodeId, label) {
+  const list = document.getElementById('pipeline-nodes');
+  const el = document.createElement('div');
+  el.className = 'pipeline-node'; el.id = 'pn_'+nodeId;
+  el.innerHTML = `<span>${label}</span><span class="remove" onclick="removePipelineNode('${nodeId}')">×</span>`;
+  list.appendChild(el);
+}
+
+async function removePipelineNode(nodeId) {
+  await fetch('/api/pipeline/remove', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({session_id:SID, node_id:nodeId})
+  });
+  document.getElementById('pn_'+nodeId)?.remove();
+}
+
+async function clearPipeline() {
+  await fetch('/api/pipeline/clear', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:SID})});
+  document.getElementById('pipeline-nodes').innerHTML='';
+}
+
+async function runPipeline() {
+  showSpinner(true); setStatus('Running pipeline…');
+  const res = await fetch('/api/pipeline/run', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({session_id:SID})
+  });
+  const data = await res.json();
+  if (data.type==='features') { showFeatures(data.features); }
+  else if (data.preview) { setOutputPreview(data.preview, data.width, data.height); setMetrics(data.metrics); }
+  setStatus(data.message || data.error || '');
+  showSpinner(false);
+}
+
+async function loadPreset(name) {
+  const res = await fetch(`/api/preset/${name}`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({session_id:SID})
+  });
+  const data = await res.json();
+  if (data.success) {
+    document.getElementById('pipeline-nodes').innerHTML='';
+    data.nodes.forEach(n => renderPipelineNode(n.node_id, n.label));
+    setStatus(`Loaded preset: ${data.name}`);
+  }
+}
+
+// ── Webcam ────────────────────────────────────────────────────────
+function webcamStart() {
+  const idx = parseInt(document.getElementById('cam-idx').value);
+  const key = document.getElementById('live-algo-check').checked ?
+              document.getElementById('live-algo-select').value : null;
+  socket.emit('webcam_start', {camera_index:idx, algo_key:key, params:{}});
+  document.getElementById('wcam-start').disabled = true;
+  document.getElementById('wcam-stop').disabled  = false;
+  document.getElementById('wcam-snap').disabled  = false;
+  document.getElementById('wcam-status').textContent = `Camera ${idx} live…`;
+}
+function webcamStop() {
+  socket.emit('webcam_stop');
+  document.getElementById('wcam-start').disabled = false;
+  document.getElementById('wcam-stop').disabled  = true;
+  document.getElementById('wcam-snap').disabled  = true;
+  document.getElementById('fps-display').textContent = 'FPS: —';
+}
+function webcamSnapshot() {
+  if (lastWcamFrame) socket.emit('webcam_snapshot', {session_id:SID, frame:lastWcamFrame});
+}
+function toggleLiveAlgo() { if (document.getElementById('live-algo-check').checked) setLiveAlgo(); else socket.emit('webcam_set_algo',{algo_key:null,params:{}}); }
+function setLiveAlgo() {
+  const key = document.getElementById('live-algo-select').value;
+  if (key) socket.emit('webcam_set_algo', {algo_key:key, params:{}});
+}
+function populateLiveAlgoSelect() {
+  const sel = document.getElementById('live-algo-select');
+  sel.innerHTML = '<option value="">— none —</option>';
+  for (const subcats of Object.values(algoTree))
+    for (const specs of Object.values(subcats))
+      for (const s of specs)
+        if (['image','overlay'].includes(s.return_type)) {
+          const o = document.createElement('option');
+          o.value = s.key; o.textContent = `[${s.lib.slice(0,2)}] ${s.label}`;
+          sel.appendChild(o);
+        }
+}
+
+// ── I/O ──────────────────────────────────────────────────────────
+async function uploadFile() {
+  const file = document.getElementById('file-input').files[0];
+  if (!file) return;
+  const fd = new FormData();
+  fd.append('file', file); fd.append('session_id', SID);
+  const res = await fetch('/api/upload', {method:'POST', body:fd});
+  const data = await res.json();
+  if (data.preview) { setInputPreview(data.preview, data.width, data.height); setStatus(`Loaded: ${file.name}`); }
+}
+
+async function defaultImage() {
+  const res = await fetch('/api/default_image', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:SID})});
+  const data = await res.json();
+  if (data.preview) setInputPreview(data.preview, data.width, data.height);
+}
+
+async function useOutputAsInput() {
+  const res = await fetch('/api/use_output_as_input', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:SID})});
+  const data = await res.json();
+  if (data.preview) { setInputPreview(data.preview, data.width, data.height); setStatus('Output → Input'); }
+}
+
+async function diffImages() {
+  const res = await fetch('/api/diff', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:SID})});
+  const data = await res.json();
+  if (data.preview) { setOutputPreview(data.preview); setStatus('Diff view (×3 amplified)'); }
+}
+
+function downloadOutput() { window.open(`/api/output/download?session_id=${SID}`, '_blank'); }
+
+async function extractFeatures() {
+  const res = await fetch('/api/features/extract', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:SID})});
+  const data = await res.json();
+  if (data.features) { showFeatures(data.features); setStatus('Features extracted'); }
+}
+
+// ── Display helpers ───────────────────────────────────────────────
+function setInputPreview(src, w, h) {
+  const c = document.getElementById('input-container');
+  c.innerHTML = `<img src="${src}" alt="input">`;
+  document.getElementById('input-meta').textContent = w&&h ? `${w}×${h}` : '';
+  drawHist('input-hist', src);
+}
+function setOutputPreview(src, w, h) {
+  const c = document.getElementById('output-container');
+  c.innerHTML = `<img src="${src}" alt="output">`;
+  document.getElementById('output-meta').textContent = w&&h ? `${w}×${h}` : '';
+  drawHist('output-hist', src);
+}
+function setMetrics(m) {
+  if (!m) return;
+  let s = '';
+  if (m.psnr !== undefined) s += `PSNR: ${m.psnr}dB  `;
+  if (m.rmse !== undefined) s += `RMSE: ${m.rmse}  `;
+  if (m.ssim !== undefined) s += `SSIM: ${m.ssim}  `;
+  if (m.sharpness !== undefined) s += `Sharpness: ${m.sharpness}`;
+  document.getElementById('metrics-bar').textContent = s || '—';
+}
+function showFeatures(feats) {
+  const lines = Object.entries(feats).map(([k,v]) =>
+    `  ${k.padEnd(36)} ${typeof v==='number' ? v.toFixed(6) : v}`
+  ).join('\n');
+  document.getElementById('feat-table').textContent = lines;
+}
+function setStatus(msg) { document.getElementById('status-bar').textContent = msg; }
+function showSpinner(v) { document.getElementById('spinner').style.display = v?'block':'none'; }
+function autoChanged() { autoProcess = document.getElementById('auto-check').checked; }
+
+// ── Histogram (client-side from img) ─────────────────────────────
+function drawHist(canvasId, src) {
+  const canvas = document.getElementById(canvasId);
+  const ctx = canvas.getContext('2d');
+  const img = new Image();
+  img.onload = () => {
+    const ow = img.width, oh = img.height;
+    const tmp = document.createElement('canvas');
+    tmp.width = ow; tmp.height = oh;
+    tmp.getContext('2d').drawImage(img, 0, 0);
+    const d = tmp.getContext('2d').getImageData(0,0,ow,oh).data;
+    const bins = 64;
+    const hr = new Array(bins).fill(0);
+    const hg = new Array(bins).fill(0);
+    const hb = new Array(bins).fill(0);
+    for (let i=0; i<d.length; i+=4) {
+      hr[Math.floor(d[i]*bins/256)]++;
+      hg[Math.floor(d[i+1]*bins/256)]++;
+      hb[Math.floor(d[i+2]*bins/256)]++;
+    }
+    const mx = Math.max(...hr,...hg,...hb)||1;
+    const W = canvas.width = canvas.offsetWidth;
+    const H = canvas.height = canvas.offsetHeight;
+    ctx.clearRect(0,0,W,H);
+    const bw = W/bins;
+    [[hr,'rgba(220,80,80,0.5)'],[hg,'rgba(80,200,80,0.5)'],[hb,'rgba(80,80,220,0.5)']].forEach(([h,col])=>{
+      ctx.fillStyle=col;
+      h.forEach((v,i)=>{
+        const bh=v/mx*(H-2);
+        ctx.fillRect(i*bw,H-bh,bw-0.5,bh);
+      });
+    });
+  };
+  img.src = src;
+}
+
+// ── Tabs ──────────────────────────────────────────────────────────
+function switchTab(name, el) {
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(t=>t.classList.remove('active'));
+  if(el) el.classList.add('active');
+  else document.querySelectorAll('.tab')[['params','pipeline','features','webcam','io'].indexOf(name)].classList.add('active');
+  document.getElementById('tab-'+name).classList.add('active');
+}
+
+// ── Theme ─────────────────────────────────────────────────────────
+let isDark = true;
+function toggleTheme() {
+  isDark = !isDark;
+  document.body.classList.toggle('light', !isDark);
+  document.getElementById('theme-btn').textContent = isDark ? '☀ Light' : '🌙 Dark';
+}
+
+// ── Boot ──────────────────────────────────────────────────────────
+boot();
+</script>
+</body>
+</html>

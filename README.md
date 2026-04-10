@@ -6,12 +6,8 @@
 pip install -r requirements.txt
 python main.py
 ```
-## Development
-Built with assistance from Claude (Anthropic).
-Wraps OpenCV (BSD), scikit-image (BSD), and CVIPtools algorithms.
 
-<img width="1919" height="1124" alt="image" src="https://github.com/user-attachments/assets/f636d954-77e8-4443-b49f-dbdf50c680d6" />
-
+---
 
 ## Why TriVision?
 
@@ -173,32 +169,3 @@ trivision/
 | Cross-platform | Yes | No | Yes | **Yes** |
 | A/B comparison | No | No | No | **Yes** |
 | Live histograms | No | No | No | **Yes** |
-
-
-## Acknowledgments
-
-TriVision builds upon the following open-source projects:
-
-**OpenCV** (BSD 3-Clause License)
-Copyright © 2000-2025 Intel Corporation, Willow Garage, Itseez
-https://opencv.org
-
-**scikit-image** (BSD 3-Clause License)
-Copyright © 2009-2025 the scikit-image development team
-https://scikit-image.org
-
-**CVIPtools** (Permissive — free for any purpose)
-Copyright © 1993-2025 Scott E Umbaugh
-Southern Illinois University Edwardsville
-https://cviptools.ece.siue.edu
-
-**NumPy** (BSD 3-Clause License)
-Copyright © 2005-2025 NumPy Developers
-https://numpy.org
-
-**PyQt6** (GPL v3)
-Copyright © Riverbank Computing Limited
-https://riverbankcomputing.com
-
-TriVision reimplements and extends algorithms from these libraries.
-No source code was copied — all implementations are original Python.
