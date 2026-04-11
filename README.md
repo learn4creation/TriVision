@@ -10,6 +10,8 @@ python main.py
 ```
 
 ---
+<img width="1915" height="1123" alt="image" src="https://github.com/user-attachments/assets/28e5c1ed-5e06-4918-9f5e-e61d5aa3a509" />
+
 
 ## Why TriVision?
 
