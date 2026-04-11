@@ -357,6 +357,20 @@ let libFilter = 'ALL';
 
 document.getElementById('session-display').textContent = SID;
 
+// ── Utilities ────────────────────────────────────────────────────
+// UX FIX: Debounce function to limit request rate during slider drag
+function debounce(func, wait) {
+  let timeout;
+  return function executedFunction(...args) {
+    const later = () => {
+      clearTimeout(timeout);
+      func(...args);
+    };
+    clearTimeout(timeout);
+    timeout = setTimeout(later, wait);
+  };
+}
+
 // ── Socket.IO ────────────────────────────────────────────────────
 const socket = io();
 socket.on('webcam_frame', data => {
@@ -492,7 +506,8 @@ function renderParams(spec) {
       input.oninput = () => {
         const v = p.kind==='int' ? parseInt(input.value) : parseFloat(parseFloat(input.value).toFixed(4));
         valDisplay.textContent = v;
-        if (autoProcess) processImage();
+        // UX FIX: Use debounced version for slider drag to prevent request spam
+        if (autoProcess) debouncedProcessImage();
       };
       currentParamGetters[p.name] = () => p.kind==='int' ? parseInt(input.value) : parseFloat(input.value);
       row.appendChild(lbl); row.appendChild(input); row.appendChild(valDisplay);
@@ -551,6 +566,9 @@ async function processImage() {
   } catch(e) { setStatus('Network error: '+e); }
   showSpinner(false);
 }
+
+// UX FIX: Debounced version for slider drag - limits to max 1 request per 200ms
+const debouncedProcessImage = debounce(processImage, 200);
 
 // ── Pipeline ──────────────────────────────────────────────────────
 async function addToPipeline(key) {

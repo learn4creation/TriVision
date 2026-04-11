@@ -1,6 +1,8 @@
-# TriVision
+# TriVision — v3.0.0
 
 **The unified Computer Vision & Image Processing Workbench** — OpenCV, CVIPtools2, and scikit-image in one application.
+
+> **What's new in v3.0.0:** CVIPtools-style Help window · File → Settings (configurable recording directory) · Recording save popup · Comprehensive built-in documentation · Windows standalone `.exe` installer
 
 ```
 pip install -r requirements.txt

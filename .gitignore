@@ -1,4 +1,24 @@
+@ -1,47 +1,55 @@
 # Python
+# ─── Virtual Environments ─────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+
+# ─── Build & Packaging Outputs ────────────────────────────────────────────────
+dist/
+build/
+*.dist/
+*.build/
+main.build/
+main.dist/
+
+# Compiled installers (generated — do not commit binaries)
+user_installers/
+TriVision_Setup.exe
+*.exe
+
+# ─── Python Cache ─────────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *$py.class
@@ -8,13 +28,28 @@ __pycache__/
 dist/
 build/
 .eggs/
+*.pyo
+*.pyd
 
 # Virtual environments
 venv/
 .venv/
 env/
+# ─── Test & Temp Artifacts ────────────────────────────────────────────────────
+test.txt
+*.tmp
+*.bak
+*.swp
+
+# ─── Data Folder (local test images / uploads) ────────────────────────────────
+data/outputs/
+data/uploads/
 
 # IDE
+# ─── User Settings (auto-generated at runtime) ────────────────────────────────
+~/.trivision/
+
+# ─── IDE & OS ─────────────────────────────────────────────────────────────────
 .vscode/
 .idea/
 *.swp
@@ -23,6 +58,7 @@ env/
 # OS
 .DS_Store
 Thumbs.db
+desktop.ini
 
 # TriVision runtime files
 *.pipeline.json
@@ -35,13 +71,22 @@ sample_images/
 
 data/
 learn4creation/
+# ─── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+logs/
 
 web_ui/__init__.py
+# ─── Jupyter ──────────────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb
 
 .dockerignore
+# ─── Docker volumes / overrides (keep Dockerfiles, ignore local overrides) ────
 docker-compose.override.yml
 docker-compose.yml
 Dockerfile
 Dockerfile.web
 install.sh
 install.bat
+build.bat
+installer.iss
