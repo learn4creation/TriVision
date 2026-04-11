@@ -52,6 +52,8 @@ def _bootstrap():
 
 _bootstrap()
 
+APP_VERSION = "3.0.0"
+
 
 # ─── Library badge colors ─────────────────────────────────────────────────────
 LIB_COLORS = {
@@ -74,7 +76,7 @@ LIB_LABELS = {
 class Theme:
     DARK  = "dark"
     LIGHT = "light"
-    _current = DARK
+    _current = LIGHT
 
     DARK_COLORS = {
         "viewer_hint":     "#252a3a",
@@ -709,36 +711,620 @@ class WebcamThread(QThread):
 
     def stop(self):
         self._running = False
-        self.wait(2000)
 
     def run(self):
-        cap = cv2.VideoCapture(self._idx)
+        import os
+        import concurrent.futures
+        # Use DirectShow on Windows for improved camera stability
+        cap = cv2.VideoCapture(self._idx, cv2.CAP_DSHOW) if os.name == 'nt' else cv2.VideoCapture(self._idx)
         if not cap.isOpened():
             self.error.emit(f"Cannot open camera {self._idx}"); return
         cap.set(cv2.CAP_PROP_FRAME_WIDTH,  1280)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
         cap.set(cv2.CAP_PROP_FPS, 30)
+        
         self._running = True
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        future = None
+        last_processed = None
+
         while self._running:
             ret, frame = cap.read()
             if not ret: break
+            
             with self._lock:
                 fn = self._algo_fn
                 kw = dict(self._algo_kw)
+                
             if fn is not None:
-                try:
-                    result = fn(frame, **kw)
-                    if isinstance(result, tuple): result = result[0]
-                    if isinstance(result, np.ndarray):
-                        if len(result.shape) == 2:
-                            result = cv2.cvtColor(result, cv2.COLOR_GRAY2BGR)
-                        frame = result
-                except Exception:
-                    pass
-            self.frame_ready.emit(frame)
-            self.msleep(30)
+                if future is None:
+                    future = pool.submit(fn, frame.copy(), **kw)
+                elif future.done():
+                    try:
+                        result = future.result()
+                        if isinstance(result, tuple): result = result[0]
+                        if isinstance(result, np.ndarray):
+                            if len(result.shape) == 2:
+                                result = cv2.cvtColor(result, cv2.COLOR_GRAY2BGR)
+                            last_processed = result
+                    except Exception:
+                        pass
+                    future = pool.submit(fn, frame.copy(), **kw)
+                
+                if last_processed is not None:
+                    self.frame_ready.emit(last_processed)
+                else:
+                    self.frame_ready.emit(frame)
+            else:
+                last_processed = None
+                self.frame_ready.emit(frame)
+                
         cap.release()
+        try:
+            pool.shutdown(wait=False, cancel_futures=True)
+        except Exception:
+            pass
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Documentation Tab
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Settings Manager
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class SettingsManager:
+    """Loads and saves user settings from ~/.trivision/trivision_settings.json"""
+    _DEFAULT_RECORDING_DIR = os.path.join(os.path.expanduser("~"), "Videos", "TriVision")
+    _SETTINGS_DIR  = os.path.join(os.path.expanduser("~"), ".trivision")
+    _SETTINGS_FILE = os.path.join(os.path.expanduser("~"), ".trivision", "trivision_settings.json")
+
+    _instance = None
+
+    @classmethod
+    def instance(cls):
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+
+    def __init__(self):
+        self._data = {}
+        self._load()
+
+    def _load(self):
+        try:
+            if os.path.exists(self._SETTINGS_FILE):
+                with open(self._SETTINGS_FILE, 'r', encoding='utf-8') as f:
+                    self._data = json.load(f)
+        except Exception:
+            self._data = {}
+
+    def _save(self):
+        try:
+            os.makedirs(self._SETTINGS_DIR, exist_ok=True)
+            with open(self._SETTINGS_FILE, 'w', encoding='utf-8') as f:
+                json.dump(self._data, f, indent=2)
+        except Exception as e:
+            print(f"TriVision: Could not save settings: {e}")
+
+    @property
+    def recording_dir(self) -> str:
+        return self._data.get("recording_dir", self._DEFAULT_RECORDING_DIR)
+
+    @recording_dir.setter
+    def recording_dir(self, path: str):
+        self._data["recording_dir"] = path
+        self._save()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Settings Dialog
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class SettingsDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("TriVision Settings")
+        self.setMinimumWidth(520)
+        self.setModal(True)
+        self._settings = SettingsManager.instance()
+        self._setup_ui()
+
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(14)
+        layout.setContentsMargins(18, 18, 18, 14)
+
+        # Title
+        title = QLabel("⚙  Settings")
+        title.setStyleSheet(
+            f"font-size:15px;font-weight:bold;color:{T.c('text_accent')};padding-bottom:4px;")
+        layout.addWidget(title)
+
+        sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet(f"color:{T.c('border')};")
+        layout.addWidget(sep)
+
+        # Recording directory
+        rec_grp = QGroupBox("Default Recording Directory")
+        rec_grp.setStyleSheet(
+            f"QGroupBox{{font-size:11px;font-weight:bold;color:{T.c('groupbox_title')};"
+            f"border:1px solid {T.c('groupbox_border')};margin-top:14px;padding-top:10px;}}"
+            f"QGroupBox::title{{subcontrol-origin:margin;left:8px;padding:0 3px;}}")
+        rec_layout = QVBoxLayout(rec_grp)
+        rec_layout.setContentsMargins(8, 14, 8, 8)
+
+        desc = QLabel(
+            "Video recordings from the Webcam tab are saved to this folder.\n"
+            "Filenames are generated automatically with a timestamp.")
+        desc.setWordWrap(True)
+        desc.setStyleSheet(f"color:{T.c('text_secondary')};font-size:10px;")
+        rec_layout.addWidget(desc)
+
+        path_row = QHBoxLayout()
+        self._rec_edit = QLineEdit(self._settings.recording_dir)
+        self._rec_edit.setReadOnly(True)
+        self._rec_edit.setStyleSheet(
+            f"QLineEdit{{background:{T.c('bg_deep')};color:{T.c('input_text')};"
+            f"border:1px solid {T.c('border')};padding:4px 6px;font-size:11px;"
+            f"border-radius:3px;}}")
+        browse_btn = QPushButton("Browse…")
+        browse_btn.setFixedWidth(80)
+        browse_btn.setStyleSheet(
+            f"QPushButton{{background:{T.c('btn_bg')};color:{T.c('btn_text')};"
+            f"border:1px solid {T.c('btn_border')};padding:4px 8px;font-size:11px;}}"
+            f"QPushButton:hover{{background:{T.c('btn_hover')};color:{T.c('text_accent')};}}")
+        browse_btn.clicked.connect(self._browse_recording_dir)
+        path_row.addWidget(self._rec_edit)
+        path_row.addWidget(browse_btn)
+        rec_layout.addLayout(path_row)
+
+        cur_lbl = QLabel(f"Current: {self._settings.recording_dir}")
+        cur_lbl.setWordWrap(True)
+        cur_lbl.setStyleSheet(f"color:{T.c('text_muted')};font-size:10px;font-family:monospace;")
+        self._cur_lbl = cur_lbl
+        rec_layout.addWidget(cur_lbl)
+
+        layout.addWidget(rec_grp)
+        layout.addStretch()
+
+        # Dialog buttons
+        btn_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        btn_box.setStyleSheet(
+            f"QPushButton{{background:{T.c('btn_bg')};color:{T.c('btn_text')};"
+            f"border:1px solid {T.c('btn_border')};padding:5px 18px;font-size:11px;min-width:70px;}}"
+            f"QPushButton:hover{{background:{T.c('btn_hover')};color:{T.c('text_accent')};}}")
+        btn_box.accepted.connect(self._apply)
+        btn_box.rejected.connect(self.reject)
+        layout.addWidget(btn_box)
+
+    def _browse_recording_dir(self):
+        d = QFileDialog.getExistingDirectory(
+            self, "Select Default Recording Directory",
+            self._rec_edit.text() or os.path.expanduser("~"))
+        if d:
+            self._rec_edit.setText(d)
+            self._cur_lbl.setText(f"Current: {d}")
+
+    def _apply(self):
+        new_path = self._rec_edit.text().strip()
+        if new_path:
+            self._settings.recording_dir = new_path
+        self.accept()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CVIPtools-style Help Window
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Mapping of TOC section titles to anchor tags in the markdown
+_HELP_TOC = [
+    ("Welcome to TriVision",        "introduction",           [
+        ("What is TriVision?",       "what-is-trivision"),
+        ("Key Features",             "key-features"),
+    ]),
+    ("Getting Started",             "getting-started",        [
+        ("First Launch",             "first-launch"),
+        ("Quick Start — Images",     "quick-start--process-your-first-image"),
+        ("Quick Start — Webcam",     "quick-start--record-from-webcam"),
+    ]),
+    ("Interface Layout",            "interface-layout",       [
+        ("Menu Bar",                 "menu-bar"),
+        ("Left Panel — Sidebar",     "left-panel--algorithm-sidebar"),
+        ("Centre Panel — Workspace", "centre-panel--image-workspace"),
+        ("Right Panel — Tabs",       "right-panel--tab-widget"),
+    ]),
+    ("Algorithm Tree",              "algorithm-tree",         [
+        ("Structure",                "structure"),
+        ("Library Badges",           "library-badges"),
+        ("Filtering the Tree",       "filtering-the-tree"),
+        ("Right-Click Menu",         "right-click-context-menu"),
+    ]),
+    ("Image Viewers",               "image-viewers",          [
+        ("INPUT Viewer",             "input-viewer"),
+        ("OUTPUT Viewer",            "output-viewer"),
+        ("Histograms",               "histograms"),
+    ]),
+    ("Parameters Panel",            "parameters-panel",       [
+        ("Algorithm Information",    "algorithm-information"),
+        ("Parameter Controls",       "parameter-controls"),
+        ("Image I/O Buttons",        "image-io-buttons"),
+    ]),
+    ("Pipeline Builder",            "pipeline-builder",       [
+        ("How It Works",             "how-the-pipeline-works"),
+        ("Pipeline Presets",         "pipeline-presets"),
+        ("Save & Load",              "saving--loading-pipelines"),
+    ]),
+    ("Batch Processing",            "batch-processing",       [
+        ("Setup",                    "setup"),
+        ("Export Results",           "export-results"),
+    ]),
+    ("Webcam & Recording",          "webcam--live-recording", [
+        ("Controls",                 "controls"),
+        ("Recording Video",          "recording-video"),
+        ("Live Algorithm Preview",   "live-algorithm-preview"),
+    ]),
+    ("Algorithm Categories",        "algorithm-categories",   [
+        ("Filtering & Smoothing",    "filtering--smoothing"),
+        ("Edge Detection",           "edge-detection"),
+        ("Morphology",               "morphology"),
+        ("Segmentation",             "segmentation"),
+        ("Feature Extraction",       "feature-extraction"),
+        ("Color Processing",         "color-processing"),
+        ("Frequency Domain",         "frequency-domain"),
+        ("Compression",              "compression"),
+        ("Restoration & Enhancement","restoration--enhancement"),
+        ("Transforms",               "transforms"),
+        ("TriVision Fusion",         "trivision-fusion"),
+    ]),
+    ("Image I/O",                   "image-io",               []),
+    ("Quality Metrics",             "quality-metrics",        []),
+    ("A/B Compare & Diff",          "ab-compare--diff",        []),
+    ("Keyboard Shortcuts",          "keyboard-shortcuts",     []),
+    ("Plugin SDK",                  "plugin-sdk",             [
+        ("Plugin Structure",         "plugin-file-structure"),
+        ("Minimal Example",          "minimal-plugin-example"),
+        ("Parameter Types",          "parameter-types"),
+    ]),
+    ("Settings",                    "settings",               []),
+    ("Themes (Light / Dark)",        "themes-light--dark",    []),
+    ("FAQ",                         "frequently-asked-questions", []),
+    ("Troubleshooting",             "troubleshooting",        []),
+]
+
+
+class HelpWindow(QWidget):
+    """CVIPtools-style two-panel documentation window."""
+
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("TriVision Help")
+        self.resize(980, 680)
+        self.setMinimumSize(700, 500)
+
+        # Load icon
+        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "logo.png")
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
+
+        self._full_html = ""
+        self._load_docs()
+        self._setup_ui()
+        # Show initial page
+        self._browser.setHtml(self._full_html)
+
+    # ── Load docs.md and convert to rich HTML ──────────────────────────────
+
+    def _load_docs(self):
+        doc_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "docs.md")
+        raw_md = ""
+        if os.path.exists(doc_path):
+            try:
+                with open(doc_path, 'r', encoding='utf-8') as f:
+                    raw_md = f.read()
+            except Exception as e:
+                raw_md = f"# Error loading docs\n\n{e}"
+        else:
+            raw_md = ("# Welcome to TriVision\n\n"
+                      "`docs.md` was not found. Please check your installation.")
+
+        # Build styled HTML from markdown
+        bg      = T.c('bg_base')
+        fg      = T.c('text_primary')
+        accent  = T.c('text_accent')
+        muted   = T.c('text_muted')
+        sec     = T.c('text_secondary')
+        border  = T.c('border')
+        code_bg = T.c('bg_deep')
+
+        css = f"""
+        <style>
+        body  {{ background:{bg}; color:{fg}; font-family:'Segoe UI',Arial,sans-serif;
+                 font-size:13px; line-height:1.65; margin:0; padding:20px 28px; }}
+        h1    {{ color:{accent}; font-size:22px; border-bottom:2px solid {accent};
+                 padding-bottom:6px; margin-top:10px; }}
+        h2    {{ color:{accent}; font-size:17px; border-bottom:1px solid {border};
+                 padding-bottom:4px; margin-top:28px; }}
+        h3    {{ color:{accent}; font-size:14px; margin-top:20px; }}
+        h4    {{ color:{sec}; font-size:13px; margin-top:16px; font-style:italic; }}
+        a     {{ color:{accent}; text-decoration:none; }}
+        a:hover {{ text-decoration:underline; }}
+        code  {{ background:{code_bg}; color:{accent}; padding:1px 5px;
+                 border-radius:3px; font-family:Consolas,monospace; font-size:12px; }}
+        pre   {{ background:{code_bg}; color:{fg}; padding:12px 16px;
+                 border-radius:4px; border:1px solid {border};
+                 font-family:Consolas,monospace; font-size:12px;
+                 white-space:pre-wrap; overflow-x:auto; }}
+        table {{ border-collapse:collapse; width:100%; margin:10px 0; }}
+        th    {{ background:{code_bg}; color:{accent}; padding:6px 10px;
+                 text-align:left; border:1px solid {border}; font-size:12px; }}
+        td    {{ padding:5px 10px; border:1px solid {border}; font-size:12px; }}
+        tr:nth-child(even) {{ background:{T.c('bg_panel')}; }}
+        blockquote {{ border-left:3px solid {accent}; margin:8px 0; padding:4px 12px;
+                      color:{muted}; background:{T.c('bg_panel')}; }}
+        hr    {{ border:none; border-top:1px solid {border}; margin:20px 0; }}
+        ul,ol {{ padding-left:24px; }}
+        li    {{ margin:3px 0; }}
+        </style>
+        """
+
+        # Simple Markdown → HTML converter for the subset used in docs.md
+        html_body = self._md_to_html(raw_md)
+        self._full_html = f"<!DOCTYPE html><html><head>{css}</head><body>{html_body}</body></html>"
+
+    def _md_to_html(self, md: str) -> str:
+        """Minimal MD→HTML converter covering the constructs used in docs.md."""
+        import re
+        lines = md.split("\n")
+        out = []
+        in_pre = False
+        in_table = False
+        in_ul = False
+        in_ol = False
+        pre_buf = []
+
+        def flush_list():
+            nonlocal in_ul, in_ol
+            if in_ul: out.append("</ul>"); in_ul = False
+            if in_ol: out.append("</ol>"); in_ol = False
+
+        def flush_table():
+            nonlocal in_table
+            if in_table: out.append("</table>"); in_table = False
+
+        def inline(text):
+            # Bold
+            text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
+            # Italic
+            text = re.sub(r'(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)', r'<i>\1</i>', text)
+            # Inline code
+            text = re.sub(r'`([^`]+)`', r'<code>\1</code>', text)
+            # Links [text](url)
+            text = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2">\1</a>', text)
+            return text
+
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+
+            # Fenced code blocks
+            if line.strip().startswith("```"):
+                if not in_pre:
+                    flush_list(); flush_table()
+                    in_pre = True; pre_buf = []
+                else:
+                    in_pre = False
+                    out.append("<pre>" + "\n".join(pre_buf) + "</pre>")
+                i += 1; continue
+            if in_pre:
+                pre_buf.append(line.replace("<", "&lt;").replace(">", "&gt;")); i += 1; continue
+
+            # Horizontal rule
+            if re.match(r'^---+$', line.strip()):
+                flush_list(); flush_table()
+                out.append("<hr>")
+                i += 1; continue
+
+            # Headings
+            m = re.match(r'^(#{1,6})\s+(.*)', line)
+            if m:
+                flush_list(); flush_table()
+                lvl = len(m.group(1))
+                txt = inline(m.group(2))
+                # Create an id anchor from text for TOC linking
+                anch = re.sub(r'[^a-z0-9-]', '', txt.lower().replace(' ', '-').replace('/', '-').replace('&', '-').replace('(', '').replace(')', '').replace(',', '').replace('.', ''))
+                anch = re.sub(r'-+', '-', anch).strip('-')
+                out.append(f'<h{lvl} id="{anch}">{txt}</h{lvl}>')
+                i += 1; continue
+
+            # Tables
+            if '|' in line and line.strip().startswith('|'):
+                flush_list()
+                cells = [c.strip() for c in line.strip().strip('|').split('|')]
+                if not in_table:
+                    out.append('<table>')
+                    in_table = True
+                    out.append('<tr>' + ''.join(f'<th>{inline(c)}</th>' for c in cells) + '</tr>')
+                    i += 1
+                    # Skip separator row
+                    if i < len(lines) and re.match(r'^[|:\- ]+$', lines[i]):
+                        i += 1
+                else:
+                    out.append('<tr>' + ''.join(f'<td>{inline(c)}</td>' for c in cells) + '</tr>')
+                    i += 1
+                continue
+            else:
+                flush_table()
+
+            # Unordered list
+            m = re.match(r'^(\s*)[-*+]\s+(.*)', line)
+            if m:
+                if not in_ul: out.append('<ul>'); in_ul = True
+                if in_ol: out.append('</ol>'); in_ol = False
+                out.append(f'<li>{inline(m.group(2))}</li>')
+                i += 1; continue
+
+            # Ordered list
+            m = re.match(r'^\d+\.\s+(.*)', line)
+            if m:
+                if not in_ol: out.append('<ol>'); in_ol = True
+                if in_ul: out.append('</ul>'); in_ul = False
+                out.append(f'<li>{inline(m.group(1))}</li>')
+                i += 1; continue
+
+            # Blockquote
+            m = re.match(r'^>\s?(.*)', line)
+            if m:
+                flush_list(); flush_table()
+                out.append(f'<blockquote>{inline(m.group(1))}</blockquote>')
+                i += 1; continue
+
+            # Blank line
+            if not line.strip():
+                flush_list(); flush_table()
+                out.append('<p>&nbsp;</p>') ; i += 1; continue
+
+            # Normal paragraph
+            flush_list(); flush_table()
+            out.append(f'<p>{inline(line)}</p>')
+            i += 1
+
+        flush_list(); flush_table()
+        return "\n".join(out)
+
+    # ── UI ────────────────────────────────────────────────────────────────────
+
+    def _setup_ui(self):
+        from PyQt6.QtWidgets import QTextBrowser
+
+        main = QVBoxLayout(self)
+        main.setContentsMargins(0, 0, 0, 0)
+        main.setSpacing(0)
+
+        # ── Top toolbar ───────────────────────────────────────────────────────
+        toolbar = QWidget()
+        toolbar.setStyleSheet(
+            f"background:{T.c('bg_panel')};border-bottom:1px solid {T.c('border')};")
+        toolbar.setFixedHeight(36)
+        tb_layout = QHBoxLayout(toolbar)
+        tb_layout.setContentsMargins(8, 4, 8, 4)
+        tb_layout.setSpacing(6)
+
+        btn_back = QPushButton("◀  Back")
+        btn_fwd  = QPushButton("▶  Forward")
+        for b in [btn_back, btn_fwd]:
+            b.setFixedHeight(26)
+            b.setStyleSheet(
+                f"QPushButton{{background:{T.c('btn_bg')};color:{T.c('btn_text')};"
+                f"border:1px solid {T.c('btn_border')};padding:2px 10px;"
+                f"font-size:11px;border-radius:3px;}}"
+                f"QPushButton:hover{{background:{T.c('btn_hover')};}}")
+
+        title_lbl = QLabel("TriVision Help")
+        title_lbl.setStyleSheet(
+            f"color:{T.c('text_accent')};font-size:13px;font-weight:bold;")
+
+        btn_back.clicked.connect(lambda: self._browser.backward())
+        btn_fwd.clicked.connect( lambda: self._browser.forward())
+
+        tb_layout.addWidget(btn_back)
+        tb_layout.addWidget(btn_fwd)
+        tb_layout.addStretch()
+        tb_layout.addWidget(title_lbl)
+        tb_layout.addStretch()
+        main.addWidget(toolbar)
+
+        # ── Split: TOC tree | content browser ─────────────────────────────────
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setChildrenCollapsible(False)
+
+        # Left: TOC tree
+        toc_widget = QWidget()
+        toc_widget.setStyleSheet(f"background:{T.c('bg_panel')};")
+        toc_layout = QVBoxLayout(toc_widget)
+        toc_layout.setContentsMargins(0, 0, 0, 0)
+        toc_layout.setSpacing(0)
+
+        contents_lbl = QLabel("  Contents")
+        contents_lbl.setFixedHeight(28)
+        contents_lbl.setStyleSheet(
+            f"background:{T.c('bg_deep')};color:{T.c('text_secondary')};"
+            f"font-size:11px;font-weight:bold;"
+            f"border-bottom:1px solid {T.c('border')};")
+        toc_layout.addWidget(contents_lbl)
+
+        self._toc = QTreeWidget()
+        self._toc.setHeaderHidden(True)
+        self._toc.setRootIsDecorated(True)
+        self._toc.setStyleSheet(
+            f"QTreeWidget{{background:{T.c('bg_panel')};border:none;"
+            f"font-size:11px;color:{T.c('text_primary')};}}"
+            f"QTreeWidget::item{{padding:3px 6px;}}"
+            f"QTreeWidget::item:hover{{background:{T.c('bg_hover')};}}"
+            f"QTreeWidget::item:selected{{background:{T.c('bg_selected')};"
+            f"color:{T.c('text_accent')};border-left:3px solid {T.c('text_accent')};}}"
+            f"QTreeWidget::branch{{background:{T.c('bg_panel')};}}")
+        self._toc.setMinimumWidth(190)
+        self._build_toc()
+        self._toc.itemClicked.connect(self._on_toc_click)
+        toc_layout.addWidget(self._toc, 1)
+        splitter.addWidget(toc_widget)
+
+        # Right: HTML browser
+        self._browser = QTextBrowser()
+        self._browser.setOpenLinks(False)  # handle internally
+        self._browser.setOpenExternalLinks(True)
+        self._browser.setStyleSheet(
+            f"QTextBrowser{{background:{T.c('bg_base')};color:{T.c('text_primary')};"
+            f"border:none;font-family:'Segoe UI',Arial,sans-serif;}}")
+        self._browser.anchorClicked.connect(self._handle_link)
+        splitter.addWidget(self._browser)
+        splitter.setSizes([210, 770])
+        main.addWidget(splitter, 1)
+
+        # ── Status bar ────────────────────────────────────────────────────────
+        status = QLabel("  Click a topic in the Contents panel to navigate")
+        status.setFixedHeight(22)
+        status.setStyleSheet(
+            f"background:{T.c('status_bg')};color:{T.c('status_text')};"
+            f"font-size:10px;border-top:1px solid {T.c('border')};")
+        main.addWidget(status)
+        self._status_lbl = status
+
+    def _build_toc(self):
+        self._toc.clear()
+        for section_title, anchor, children in _HELP_TOC:
+            parent = QTreeWidgetItem([section_title])
+            parent.setData(0, Qt.ItemDataRole.UserRole, anchor)
+            parent.setFont(0, QFont("", 10, QFont.Weight.Bold))
+            parent.setForeground(0, QColor(T.c('text_primary')))
+            for child_title, child_anchor in children:
+                child = QTreeWidgetItem([child_title])
+                child.setData(0, Qt.ItemDataRole.UserRole, child_anchor)
+                child.setForeground(0, QColor(T.c('text_secondary')))
+                parent.addChild(child)
+            self._toc.addTopLevelItem(parent)
+
+        # Expand top-level items by default
+        for i in range(self._toc.topLevelItemCount()):
+            self._toc.topLevelItem(i).setExpanded(False)
+
+    def _on_toc_click(self, item, _col):
+        anchor = item.data(0, Qt.ItemDataRole.UserRole)
+        if anchor:
+            self._browser.setHtml(self._full_html)
+            self._browser.scrollToAnchor(anchor)
+            self._status_lbl.setText(f"  {item.text(0)}")
+
+    def _handle_link(self, url):
+        anchor = url.fragment()
+        if anchor:
+            self._browser.scrollToAnchor(anchor)
+        else:
+            from PyQt6.QtGui import QDesktopServices
+            QDesktopServices.openUrl(url)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Webcam Tab
@@ -778,31 +1364,46 @@ class WebcamTab(QWidget):
         top.addWidget(self._fps_lbl)
         layout.addLayout(top)
 
-        # Top controls — Row 2: Start / Stop / Snapshot buttons (full width)
-        btn_row = QHBoxLayout()
-        btn_row.setSpacing(6)
-        self._start_btn = QPushButton("▶  Start Camera")
-        self._stop_btn  = QPushButton("■  Stop")
-        self._snap_btn  = QPushButton("📸  Snapshot → Input")
+        # Top controls — Row 2: Start / Stop / Snapshot buttons (two nested rows)
+        btn_layout = QVBoxLayout()
+        btn_layout.setSpacing(6)
+        row1 = QHBoxLayout(); row1.setSpacing(6)
+        row2 = QHBoxLayout(); row2.setSpacing(6)
+        
+        self._start_btn = QPushButton("▶ Start")
+        self._stop_btn  = QPushButton("■ Stop")
+        self._snap_btn  = QPushButton("📷 Snapshot")
+        self._record_btn = QPushButton("⏺ Record")
         self._snap_btn.setEnabled(False)
         self._stop_btn.setEnabled(False)
+        self._record_btn.setEnabled(False)
+        
+        # State for recording
+        self._is_recording = False
+        self._video_writer = None
+
         for b, col_key in [(self._start_btn, "cam_start_bg"),
                            (self._stop_btn,  "cam_stop_bg"),
-                           (self._snap_btn,  "cam_snap_bg")]:
+                           (self._snap_btn,  "cam_snap_bg"),
+                           (self._record_btn, "cam_snap_bg")]:
             b.setMinimumHeight(30)
             b.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             b.setStyleSheet(
                 f"QPushButton{{background:{T.c(col_key)};color:{T.c('cam_btn_text')};"
-                f"border:1px solid {T.c('border')};padding:4px 8px;font-size:11px;}}"
+                f"border:1px solid {T.c('border')};padding:4px 8px;font-size:11px;border-radius:4px;}}"
+                f"QPushButton:hover:!disabled{{background:{T.c('btn_hover')};}}"
                 f"QPushButton:disabled{{background:{T.c('cam_btn_dis_bg')};"
-                f"color:{T.c('cam_btn_dis_text')};}}")
+                f"color:{T.c('cam_btn_dis_text')};border:1px solid {T.c('border_strong')};}}")
         self._start_btn.clicked.connect(self._start)
         self._stop_btn.clicked.connect(self._stop)
         self._snap_btn.clicked.connect(self._snapshot)
-        btn_row.addWidget(self._start_btn)
-        btn_row.addWidget(self._stop_btn)
-        btn_row.addWidget(self._snap_btn)
-        layout.addLayout(btn_row)
+        self._record_btn.clicked.connect(self._toggle_record)
+        
+        row1.addWidget(self._start_btn); row1.addWidget(self._stop_btn)
+        row2.addWidget(self._snap_btn); row2.addWidget(self._record_btn)
+        btn_layout.addLayout(row1)
+        btn_layout.addLayout(row2)
+        layout.addLayout(btn_layout)
 
         # Live viewer
         self._viewer = ImageViewer("Camera feed will appear here")
@@ -812,13 +1413,22 @@ class WebcamTab(QWidget):
         # Live algo selector
         algo_grp = QGroupBox("Live Algorithm Preview")
         algo_grp.setStyleSheet(
-            f"QGroupBox{{font-size:10px;color:{T.c('groupbox_title')};"
-            f"border:1px solid {T.c('groupbox_border')};margin-top:8px;}}"
-            f"QGroupBox::title{{left:6px;}}")
+            f"QGroupBox{{font-size:11px;font-weight:bold;color:{T.c('groupbox_title')};"
+            f"border:1px solid {T.c('groupbox_border')};margin-top:14px;padding-top:10px;}}"
+            f"QGroupBox::title{{subcontrol-origin: margin; left:8px; padding:0 3px;}}")
         ag = QHBoxLayout(algo_grp)
-        self._live_check = QCheckBox("Enable live processing")
-        self._live_check.setStyleSheet(f"color:{T.c('text_secondary')};font-size:11px;")
-        self._live_check.toggled.connect(self._toggle_live_algo)
+        ag.setContentsMargins(6, 12, 6, 6)
+        self._live_btn = QPushButton("▶ Live Preview")
+        self._live_btn.setCheckable(True)
+        self._live_btn.setStyleSheet(
+            f"QPushButton{{background:{T.c('cam_start_bg')};color:{T.c('cam_btn_text')};"
+            f"border:1px solid {T.c('border')};padding:4px 16px;min-width:100px;font-size:11px;border-radius:3px;}}"
+            f"QPushButton:hover:!checked{{background:{T.c('btn_hover')};}}"
+            f"QPushButton:checked{{background:#cc3333;color:#ffffff;"
+            f"border:1px solid #aa2222;font-weight:bold;}}"
+            f"QPushButton:checked:hover{{background:#aa2222;}}")
+        self._live_btn.toggled.connect(lambda c: self._live_btn.setText("■ Stop Preview" if c else "▶ Live Preview"))
+        self._live_btn.toggled.connect(self._toggle_live_algo)
         self._algo_combo = QComboBox()
         self._algo_combo.setStyleSheet(
             f"QComboBox{{background:{T.c('bg_panel')};color:{T.c('text_primary')};"
@@ -830,7 +1440,7 @@ class WebcamTab(QWidget):
             if spec.return_type in (ReturnType.IMAGE, ReturnType.OVERLAY):
                 self._algo_combo.addItem(f"[{LIB_LABELS.get(spec.lib,'?')}] {spec.label}", spec.key)
         self._algo_combo.currentIndexChanged.connect(self._update_live_algo)
-        ag.addWidget(self._live_check); ag.addWidget(self._algo_combo, 1)
+        ag.addWidget(self._live_btn); ag.addWidget(self._algo_combo, 1)
         layout.addWidget(algo_grp)
 
         # Status
@@ -844,27 +1454,148 @@ class WebcamTab(QWidget):
         self._thread = WebcamThread(idx)
         self._thread.frame_ready.connect(self._on_frame)
         self._thread.error.connect(self._on_error)
+        self._thread.finished.connect(self._on_thread_finished)
         self._thread.start()
         self._start_btn.setEnabled(False); self._stop_btn.setEnabled(True); self._snap_btn.setEnabled(True)
+        self._record_btn.setEnabled(True)
         self._fps_timer.start(1000)
         self._status_lbl.setText(f"Camera {idx} live...")
-        self._toggle_live_algo(self._live_check.isChecked())
+        self._toggle_live_algo(self._live_btn.isChecked())
 
     def _stop(self):
-        if self._thread: self._thread.stop(); self._thread = None
-        self._start_btn.setEnabled(True); self._stop_btn.setEnabled(False); self._snap_btn.setEnabled(False)
+        if self._is_recording: self._toggle_record()
+        self._stop_btn.setEnabled(False); self._snap_btn.setEnabled(False)
+        self._record_btn.setEnabled(False)
+        self._start_btn.setEnabled(False) # Prevent concurrent execution while terminating
         self._fps_timer.stop()
+        self._status_lbl.setText("Stopping... finishing current frame processing.")
+        if self._thread:
+            self._thread.stop()
+        else:
+            self._on_thread_finished()
+
+    def _on_thread_finished(self):
+        self._thread = None
+        self._start_btn.setEnabled(True)
         self._status_lbl.setText("Camera stopped"); self._fps_lbl.setText("FPS: \u2014")
+        self._last_frame = None
+        self._viewer.set_image(None)
 
     def _snapshot(self):
         if self._last_frame is not None:
             self.snapshot_taken.emit(self._last_frame.copy())
             self._status_lbl.setText("Snapshot sent to Input panel \u2713")
 
+    def set_recording_dir(self, path: str):
+        """Update the recording directory (called from Settings dialog)."""
+        # nothing to store here – always reads from SettingsManager at record-time
+        pass
+
+    def _toggle_record(self):
+        if not self._is_recording:
+            # Start recording automatically with timestamp to prevent loss
+            import datetime
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            record_dir = SettingsManager.instance().recording_dir
+            os.makedirs(record_dir, exist_ok=True)
+            filename = f"recording_{timestamp}.mp4"
+            fn = os.path.join(record_dir, filename)
+
+            fps = 30.0  # Target FPS
+            if self._last_frame is not None:
+                h, w = self._last_frame.shape[:2]
+            else:
+                h, w = 480, 640  # Fallback
+
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            self._video_writer = cv2.VideoWriter(fn, fourcc, fps, (w, h))
+            self._current_record_path = fn
+
+            if self._video_writer is not None and self._video_writer.isOpened():
+                self._is_recording = True
+                self._record_btn.setText("■ Stop Record")
+                self._record_btn.setStyleSheet(
+                    f"QPushButton{{background:#cc3333;color:#ffffff;"
+                    f"border:1px solid #aa2222;border-radius:4px;padding:4px 8px;"
+                    f"font-size:11px;font-weight:bold;}}"
+                    f"QPushButton:hover{{background:#aa2222;}}")
+                self._status_lbl.setText(f"Recording → {fn}")
+            else:
+                QMessageBox.warning(self, "Recording Error",
+                                    f"Could not create video file:\n{fn}\n\n"
+                                    "Check that the recording directory exists and is writable.")
+                self._video_writer = None
+        else:
+            # Stop recording
+            self._is_recording = False
+            saved_path = getattr(self, '_current_record_path', '')
+            if self._video_writer:
+                self._video_writer.release()
+                self._video_writer = None
+            self._current_record_path = ''
+            self._record_btn.setText("⏺ Record")
+            self._record_btn.setStyleSheet(
+                f"QPushButton{{background:{T.c('cam_snap_bg')};color:{T.c('cam_btn_text')};"
+                f"border:1px solid {T.c('border')};padding:4px 8px;font-size:11px;border-radius:4px;}}"
+                f"QPushButton:hover:!disabled{{background:{T.c('btn_hover')};}}")
+            self._status_lbl.setText("Recording saved.")
+            # Show save-confirmation popup
+            if saved_path:
+                self._show_save_popup(saved_path)
+
+    def _show_save_popup(self, filepath: str):
+        """Display a styled popup confirming where the recording was saved."""
+        folder = os.path.dirname(filepath)
+        fname  = os.path.basename(filepath)
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Recording Saved")
+        msg.setIcon(QMessageBox.Icon.Information)
+        msg.setText("<b>✅ Recording saved successfully!</b>")
+        msg.setInformativeText(
+            f"<b>File name:</b> {fname}<br>"
+            f"<b>Location:</b> {folder}")
+        msg.setDetailedText(f"Full path: {filepath}")
+        msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+        msg.setStyleSheet(
+            f"QMessageBox{{background:{T.c('bg_base')};color:{T.c('text_primary')};"
+            f"font-size:12px;}}"
+            f"QLabel{{color:{T.c('text_primary')};font-size:12px;}}"
+            f"QPushButton{{background:{T.c('process_btn_bg')};color:{T.c('process_btn_text')};"
+            f"border:none;padding:5px 18px;font-size:11px;border-radius:3px;"
+            f"min-width:70px;}}"
+            f"QPushButton:hover{{background:{T.c('process_btn_hover')};}}")
+        msg.exec()
+
     def _on_frame(self, frame: np.ndarray):
+        if not self._thread: return # Prevent ghost frames after stop was clicked
         self._last_frame = frame
         self._viewer.set_image(frame)
         self._frame_count += 1
+        
+        # Frame buffering for fast-forward fix
+        if self._is_recording and self._video_writer is not None:
+            import time
+            curr_time = time.perf_counter()
+            if not hasattr(self, '_last_video_time') or self._last_video_time is None:
+                self._last_video_time = curr_time
+                num_writes = 1
+            else:
+                elapsed = curr_time - self._last_video_time
+                self._last_video_time = curr_time
+                # 30 fps means 1 frame should realistically take 0.033 seconds
+                # We calculate how many video frames fit into the elapsed real time
+                expected_frames = max(1, int(round(elapsed * 30.0)))
+                # Set a hard cap to avoid locking if freezing heavily
+                num_writes = min(expected_frames, 15)
+
+            write_frame = frame
+            # Ensure it is BGR for cv2 video writer
+            if len(frame.shape) == 2:
+                write_frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+            elif len(frame.shape) == 3 and frame.shape[2] == 4:
+                write_frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+            for _ in range(num_writes):
+                self._video_writer.write(write_frame)
 
     def _on_error(self, msg: str):
         self._status_lbl.setText(f"Error: {msg}"); self._stop()
@@ -881,7 +1612,7 @@ class WebcamTab(QWidget):
         else: self._thread.clear_algo()
 
     def _update_live_algo(self):
-        if not self._thread or not self._live_check.isChecked(): return
+        if not self._thread or not self._live_btn.isChecked(): return
         key = self._algo_combo.currentData()
         spec = REGISTRY.get(key)
         if spec:
@@ -1161,8 +1892,13 @@ class BatchTab(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("TriVision — Unified Image Science Workbench")
+        self.setWindowTitle(f"TriVision v{APP_VERSION} — Unified Image Science Workbench")
         self.setMinimumSize(1500, 900)
+        
+        # Load custom app logo if it exists
+        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "logo.png")
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
         self._input_img: Optional[np.ndarray] = None
         self._current_spec = None
         self._worker: Optional[Worker] = None
@@ -1180,6 +1916,7 @@ class MainWindow(QMainWindow):
         rl = QHBoxLayout(root); rl.setContentsMargins(4,4,4,4); rl.setSpacing(4)
 
         outer = QSplitter(Qt.Orientation.Horizontal)
+        outer.setChildrenCollapsible(False)
 
         # ── LEFT: Algorithm Tree ──────────────────────────────────────
         left = QWidget(); ll = QVBoxLayout(left); ll.setContentsMargins(0,0,0,0)
@@ -1354,10 +2091,11 @@ class MainWindow(QMainWindow):
         # I/O buttons
         io_grp = QGroupBox("Image I/O")
         io_grp.setStyleSheet(
-            f"QGroupBox{{font-size:10px;color:{T.c('groupbox_title')};"
-            f"border:1px solid {T.c('groupbox_border')};margin-top:8px;}}"
-            f"QGroupBox::title{{left:6px;}}")
+            f"QGroupBox{{font-size:11px;font-weight:bold;color:{T.c('groupbox_title')};"
+            f"border:1px solid {T.c('groupbox_border')};margin-top:14px;padding-top:10px;}}"
+            f"QGroupBox::title{{subcontrol-origin: margin; left:8px; padding:0 3px;}}")
         ig = QVBoxLayout(io_grp)
+        ig.setContentsMargins(6, 12, 6, 6)
         self._io_btns = []
         for lbl, slot in [("📂 Load Image",self._load_image),
                            ("💾 Save Output",self._save_image),
@@ -1485,30 +2223,58 @@ class MainWindow(QMainWindow):
             f"QMenuBar{{background:{T.c('menubar_bg')};color:{T.c('menubar_text')};"
             f"font-size:11px;}}"
             f"QMenuBar::item:selected{{background:{T.c('bg_hover')};}}")
+
+        # ── File ─────────────────────────────────────────────────────────────
         fm = mb.addMenu("File")
-        for lbl, sc, fn in [("Open Image…","Ctrl+O",self._load_image),
-                              ("Save Output…","Ctrl+S",self._save_image),
-                              (None,None,None),("Exit","Ctrl+Q",self.close)]:
-            if lbl is None: fm.addSeparator(); continue
-            a = QAction(lbl,self); a.setShortcut(sc); a.triggered.connect(fn); fm.addAction(a)
+        for lbl, sc, fn in [("Open Image…", "Ctrl+O", self._load_image),
+                             ("Save Output…", "Ctrl+S", self._save_image),
+                             (None, None, None)]:
+            if lbl is None:
+                fm.addSeparator(); continue
+            a = QAction(lbl, self); a.setShortcut(sc); a.triggered.connect(fn); fm.addAction(a)
 
+        a_settings = QAction("Settings…", self)
+        a_settings.triggered.connect(self._show_settings)
+        fm.addAction(a_settings)
+        fm.addSeparator()
+        a_exit = QAction("Exit", self)
+        a_exit.setShortcut("Ctrl+Q")
+        a_exit.triggered.connect(self.close)
+        fm.addAction(a_exit)
+
+        # ── View ─────────────────────────────────────────────────────────────
         vm = mb.addMenu("View")
-        a = QAction("Extract All Features",self); a.triggered.connect(self._extract_features); vm.addAction(a)
-        a2 = QAction("A/B Compare",self); a2.triggered.connect(self._show_ab); vm.addAction(a2)
+        a = QAction("Extract All Features", self)
+        a.triggered.connect(self._extract_features); vm.addAction(a)
+        a2 = QAction("A/B Compare", self)
+        a2.triggered.connect(self._show_ab); vm.addAction(a2)
         vm.addSeparator()
-        self._theme_action = QAction("☀  Switch to Light Theme", self)
-        self._theme_action.setShortcut("Ctrl+T")
-        self._theme_action.triggered.connect(self._toggle_theme)
-        vm.addAction(self._theme_action)
+        tm = vm.addMenu("Theme")
+        a_light = QAction("Light Theme", self)
+        a_light.triggered.connect(lambda: self._set_theme(Theme.LIGHT))
+        tm.addAction(a_light)
+        a_dark = QAction("Dark Theme", self)
+        a_dark.triggered.connect(lambda: self._set_theme(Theme.DARK))
+        tm.addAction(a_dark)
+        a_sys = QAction("System OS Match", self)
+        a_sys.triggered.connect(self._set_system_theme)
+        tm.addAction(a_sys)
 
+        # ── Pipeline ─────────────────────────────────────────────────────────
         pm = mb.addMenu("Pipeline")
-        for lbl, fn in [("Run Pipeline",self._run_pipeline),
-                          ("Save Pipeline…",self._save_pipeline),
-                          ("Load Pipeline…",self._load_pipeline)]:
-            a = QAction(lbl,self); a.triggered.connect(fn); pm.addAction(a)
+        for lbl, fn in [("Run Pipeline", self._run_pipeline),
+                         ("Save Pipeline…", self._save_pipeline),
+                         ("Load Pipeline…", self._load_pipeline)]:
+            a = QAction(lbl, self); a.triggered.connect(fn); pm.addAction(a)
 
+        # ── Help ─────────────────────────────────────────────────────────────
         hm = mb.addMenu("Help")
-        a = QAction("About TriVision",self); a.triggered.connect(self._about); hm.addAction(a)
+        a_doc = QAction("Documentation", self)
+        a_doc.triggered.connect(self._show_docs)
+        hm.addAction(a_doc)
+        a_about = QAction("About TriVision", self)
+        a_about.triggered.connect(self._about)
+        hm.addAction(a_about)
 
 
 
@@ -1644,6 +2410,10 @@ class MainWindow(QMainWindow):
         cv2.putText(img,"TriVision",(155,265),cv2.FONT_HERSHEY_DUPLEX,1.6,(240,240,255),2)
         cv2.putText(img,"OpenCV · CVIPtools2 · scikit-image",(105,300),cv2.FONT_HERSHEY_SIMPLEX,0.6,(100,130,180),1)
         self._set_input(img)
+        # Thoroughly clear the output viewer and stats (Bug Fix for Ghost Output)
+        self._output_viewer.set_image(None)
+        self._output_hist.set_image(None)
+        self._metric_lbl.setText("PSNR: \u2014  RMSE: \u2014  SSIM: \u2014  Sharpness: \u2014")
 
     def _set_input(self, img: np.ndarray):
         self._input_img = img
@@ -1719,10 +2489,23 @@ class MainWindow(QMainWindow):
         T.apply_palette(QApplication.instance())
         icon = "☀️" if T.is_dark() else "🌙"
         label = "Light Theme" if T.is_dark() else "Dark Theme"
-        self._theme_action.setText(f"{icon}  Switch to {label}")
+    def _set_theme(self, theme_val):
+        T._current = theme_val
+        T.apply_palette(QApplication.instance())
         self._apply_theme_to_widgets()
-        self.statusBar().showMessage(
-            f"Switched to {'dark' if T.is_dark() else 'light'} theme")
+        self.statusBar().showMessage(f"Switched to {theme_val} theme")
+
+    def _set_system_theme(self):
+        bg_color = QApplication.instance().palette().color(QPalette.ColorRole.Window)
+        target = T.LIGHT if bg_color.lightnessF() > 0.5 else T.DARK
+        self._set_theme(target)
+        self.statusBar().showMessage("Theme matched to System OS")
+
+    def _toggle_theme(self):
+        # Called by ThemeToggleButton; T.toggle() already triggered in button class
+        T.apply_palette(QApplication.instance())
+        self._apply_theme_to_widgets()
+        self.statusBar().showMessage(f"Switched to {'dark' if T.is_dark() else 'light'} theme")
 
     def _apply_theme_to_widgets(self):
         """Reapply all dynamic styles after theme toggle."""
@@ -1824,12 +2607,17 @@ class MainWindow(QMainWindow):
         # Webcam buttons
         for b, col_key in [(self._webcam_tab._start_btn, "cam_start_bg"),
                            (self._webcam_tab._stop_btn,  "cam_stop_bg"),
-                           (self._webcam_tab._snap_btn,  "cam_snap_bg")]:
+                           (self._webcam_tab._snap_btn,  "cam_snap_bg"),
+                           (self._webcam_tab._record_btn, "cam_snap_bg")]:
+            if b == getattr(self._webcam_tab, "_record_btn", None) and getattr(self._webcam_tab, "_is_recording", False):
+                # Keep the red styling if currently recording
+                continue
             b.setStyleSheet(
                 f"QPushButton{{background:{T.c(col_key)};color:{T.c('cam_btn_text')};"
-                f"border:1px solid {T.c('border')};padding:4px 8px;font-size:11px;}}"
+                f"border:1px solid {T.c('border')};padding:4px 8px;font-size:11px;border-radius:4px;}}"
+                f"QPushButton:hover:!disabled{{background:{T.c('btn_hover')};}}"
                 f"QPushButton:disabled{{background:{T.c('cam_btn_dis_bg')};"
-                f"color:{T.c('cam_btn_dis_text')};}}")
+                f"color:{T.c('cam_btn_dis_text')};border:1px solid {T.c('border_strong')};}}")
         self._webcam_tab._cam_spin.setStyleSheet(
             f"QSpinBox{{background:{T.c('bg_panel')};color:{T.c('input_text')};"
             f"border:1px solid {T.c('border')};padding:2px;}}")
@@ -1837,8 +2625,13 @@ class MainWindow(QMainWindow):
             f"color:{T.c('text_green')};font-family:monospace;font-size:11px;")
         self._webcam_tab._status_lbl.setStyleSheet(
             f"color:{T.c('status_text')};font-size:10px;font-family:monospace;")
-        self._webcam_tab._live_check.setStyleSheet(
-            f"color:{T.c('text_secondary')};font-size:11px;")
+        self._webcam_tab._live_btn.setStyleSheet(
+            f"QPushButton{{background:{T.c('cam_start_bg')};color:{T.c('cam_btn_text')};"
+            f"border:1px solid {T.c('border')};padding:4px 16px;min-width:100px;font-size:11px;border-radius:3px;}}"
+            f"QPushButton:hover:!checked{{background:{T.c('btn_hover')};}}"
+            f"QPushButton:checked{{background:#cc3333;color:#ffffff;"
+            f"border:1px solid #aa2222;font-weight:bold;}}"
+            f"QPushButton:checked:hover{{background:#aa2222;}}")
         self._webcam_tab._algo_combo.setStyleSheet(
             f"QComboBox{{background:{T.c('bg_panel')};color:{T.c('text_primary')};"
             f"border:1px solid {T.c('border')};padding:3px;font-size:11px;}}")
@@ -1868,17 +2661,45 @@ class MainWindow(QMainWindow):
                 f"color:{T.c('tab_selected_text')};border-bottom:none;}}"
                 f"QTabBar::tab:hover{{color:{T.c('text_accent')};}}")
 
+    def closeEvent(self, event):
+        # Ensure all processes exit completely rather than dangling in the background
+        # Safely shut down video writer to prevent MP4 header corruption
+        if hasattr(self, '_webcam_tab') and self._webcam_tab._is_recording:
+            self._webcam_tab._toggle_record() 
+        import os
+        os._exit(0)
+
+    def _show_settings(self):
+        dlg = SettingsDialog(self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            # Propagate new recording dir to webcam tab (runtime update)
+            self._webcam_tab.set_recording_dir(
+                SettingsManager.instance().recording_dir)
+            self.statusBar().showMessage(
+                f"Settings saved — recording dir: {SettingsManager.instance().recording_dir}")
+
+    def _show_docs(self):
+        if not hasattr(self, '_help_window') or self._help_window is None:
+            self._help_window = HelpWindow()
+        self._help_window.show()
+        self._help_window.raise_()
+        self._help_window.activateWindow()
+
     def _about(self):
-        QMessageBox.about(self,"About TriVision",
-            "<b>TriVision</b><br>"
+        QMessageBox.about(self, "About TriVision",
+            f"<b>TriVision</b> &nbsp;<span style='color:grey;font-size:10px'>v{APP_VERSION}</span><br>"
             "Unified Computer Vision &amp; Image Processing Workbench<br><br>"
             f"<b>{len(REGISTRY)} algorithms</b> from three libraries:<br>"
-            "  OpenCV — speed, camera I/O, DNN inference<br>"
-            "  CVIPtools2 — classical CVIP algorithms<br>"
-            "  scikit-image — research-grade algorithms<br>"
-            "  TriVision fusion — cross-library composites<br><br>"
-            "Features: visual pipeline builder, A/B compare, batch processing,<br>"
-            "comprehensive feature extraction, plugin SDK, quality metrics.")
+            "&nbsp;&nbsp;OpenCV &mdash; speed, camera I/O, DNN inference<br>"
+            "&nbsp;&nbsp;CVIPtools2 &mdash; classical CVIP algorithms<br>"
+            "&nbsp;&nbsp;scikit-image &mdash; research-grade algorithms<br>"
+            "&nbsp;&nbsp;TriVision fusion &mdash; cross-library composites<br><br>"
+            "<b>New in v3.0.0:</b><br>"
+            "&nbsp;&nbsp;CVIPtools-style Help window with full documentation<br>"
+            "&nbsp;&nbsp;Settings dialog &mdash; configure recording directory<br>"
+            "&nbsp;&nbsp;Recording save popup with file name &amp; location<br>"
+            "&nbsp;&nbsp;Standalone .exe installer (Windows)")
+
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1886,11 +2707,21 @@ class MainWindow(QMainWindow):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def main():
+    import os
+    os.environ["OPENCV_LOG_LEVEL"] = "FATAL"
+    os.environ["QT_LOGGING_RULES"] = "qt.qpa.fonts.warning=false;qt.qpa.fonts.critical=false"
+    
     app = QApplication(sys.argv)
+    from PyQt6.QtGui import QFont
+    app.setFont(QFont("Segoe UI", 10))
     app.setStyle("Fusion")
-    T.apply_palette(app)  # starts in dark mode
+    
+    # Let constructor use default (LIGHT) unless explicitly evaluating OS
+    # T.apply_palette is handled internally if needed, but we init to LIGHT
+    T.apply_palette(app)
+    
     win = MainWindow()
-    win.show()
+    win.showMaximized()
     sys.exit(app.exec())
 
 

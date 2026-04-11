@@ -43,12 +43,18 @@ load_plugins(os.path.join(os.path.dirname(os.path.dirname(__file__)), "plugins")
 
 # ── App setup ─────────────────────────────────────────────────────────────────
 app = Flask(__name__, template_folder="templates", static_folder="static")
-app.config["SECRET_KEY"] = "trivision-secret-2026"
+# SECURITY FIX: Load SECRET_KEY from environment or generate secure random key
+app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY") or os.urandom(32).hex()
 app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024  # 32 MB upload limit
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
 
 # ── Global state ──────────────────────────────────────────────────────────────
-_sessions: dict[str, dict] = {}          # session_id → {input_img, output_img, pipeline}
+# BUG FIX: Added TTL-based session management to prevent memory leak
+_sessions: dict[str, dict] = {}          # session_id → {input_img, output_img, pipeline, last_access}
+_sessions_lock = threading.Lock()
+SESSION_TTL = 1800  # 30 minutes in seconds
+MAX_SESSIONS = 100  # Maximum number of concurrent sessions
+
 _webcam_thread = None
 _webcam_lock   = threading.Lock()
 _webcam_running = False
@@ -80,10 +86,30 @@ def _b64_to_img(b64: str) -> np.ndarray:
     arr = np.frombuffer(buf, np.uint8)
     return cv2.imdecode(arr, cv2.IMREAD_COLOR)
 
+def _cleanup_sessions():
+    """Remove expired sessions to prevent memory leak."""
+    with _sessions_lock:
+        now = time.time()
+        expired = [sid for sid, sess in _sessions.items()
+                   if now - sess.get("last_access", 0) > SESSION_TTL]
+        for sid in expired:
+            del _sessions[sid]
+
+        # If still over limit, remove oldest sessions
+        if len(_sessions) > MAX_SESSIONS:
+            sorted_sessions = sorted(_sessions.items(),
+                                    key=lambda x: x[1].get("last_access", 0))
+            for sid, _ in sorted_sessions[:len(_sessions) - MAX_SESSIONS]:
+                del _sessions[sid]
+
 def _get_session(sid: str) -> dict:
-    if sid not in _sessions:
-        _sessions[sid] = {"input_img": None, "output_img": None,
-                           "pipeline": Pipeline()}
+    _cleanup_sessions()  # Clean up on every access
+    with _sessions_lock:
+        if sid not in _sessions:
+            _sessions[sid] = {"input_img": None, "output_img": None,
+                               "pipeline": Pipeline(), "last_access": time.time()}
+        else:
+            _sessions[sid]["last_access"] = time.time()
     return _sessions[sid]
 
 def _run_algo(img: np.ndarray, key: str, params: dict):
@@ -402,7 +428,8 @@ def default_image():
 
 @socketio.on("webcam_start")
 def handle_webcam_start(data):
-    global _webcam_running, _webcam_thread
+    global _webcam_running, _webcam_thread, _webcam_algo_key, _webcam_algo_params
+    # BUG FIX: Added missing global declarations - these were local variables before
     cam_idx = int(data.get("camera_index", 0))
     _webcam_algo_key    = data.get("algo_key", None)
     _webcam_algo_params = data.get("params", {})

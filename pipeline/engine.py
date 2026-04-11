@@ -47,10 +47,23 @@ class PipelineNode:
     def _hash_params(self) -> str:
         return hashlib.md5(json.dumps(self.params, sort_keys=True).encode()).hexdigest()[:8]
 
+    def _hash_input(self, img: np.ndarray) -> str:
+        """Fast hash of input image based on shape and sample of bytes."""
+        # BUG FIX: Include input image in cache key to prevent stale results
+        # Use shape + hash of a sample of bytes for speed
+        shape_str = f"{img.shape}_{img.dtype}"
+        # Sample from corners and center to detect image changes
+        h, w = img.shape[:2]
+        sample = img[::max(1, h//4), ::max(1, w//4)].tobytes()[:1024]
+        img_hash = hashlib.md5(shape_str.encode() + sample).hexdigest()[:8]
+        return img_hash
+
     def execute(self, input_img: np.ndarray) -> Any:
-        """Execute the algorithm, using cache if params haven't changed."""
+        """Execute the algorithm, using cache if params and input haven't changed."""
         ph = self._hash_params()
-        if self._result is not None and self._param_hash == ph:
+        ih = self._hash_input(input_img)
+        cache_key = f"{ph}_{ih}"
+        if self._result is not None and self._param_hash == cache_key:
             return self._result  # cache hit
         spec = self.spec
         if spec is None:
@@ -65,7 +78,7 @@ class PipelineNode:
                     img = img.copy()
                 result = img
             self._result = result
-            self._param_hash = ph
+            self._param_hash = cache_key
         except Exception as e:
             # Return an error image rather than crashing
             h, w = input_img.shape[:2]
